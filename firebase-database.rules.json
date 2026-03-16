@@ -1,0 +1,59 @@
+{
+  "rules": {
+    ".read": false,
+    ".write": false,
+    "profiles": {
+      "$uid": {
+        ".read": "auth != null && auth.uid === $uid",
+        ".write": "auth != null && auth.uid === $uid"
+      }
+    },
+    "classroomSummaries": {
+      "$classId": {
+        ".read": "auth != null && (data.child('visibility').val() === 'public' || data.child('ownerUid').val() === auth.uid || root.child('classrooms').child($classId).child('members').child(auth.uid).exists())",
+        ".write": "auth != null && ((!data.exists() && newData.child('ownerUid').val() === auth.uid) || data.child('ownerUid').val() === auth.uid)"
+      }
+    },
+    "classrooms": {
+      "$classId": {
+        ".read": "auth != null && (data.child('meta/visibility').val() === 'public' || data.child('meta/ownerUid').val() === auth.uid || data.child('members').child(auth.uid).exists())",
+        ".write": "auth != null && ((!data.exists() && newData.child('meta/ownerUid').val() === auth.uid) || data.child('meta/ownerUid').val() === auth.uid)",
+        "meta": {
+          ".write": "auth != null && ((!data.exists() && newData.child('ownerUid').val() === auth.uid) || data.child('ownerUid').val() === auth.uid)"
+        },
+        "board": {
+          ".write": "auth != null && (data.parent().child('meta/ownerUid').val() === auth.uid || newData.parent().child('meta/ownerUid').val() === auth.uid)"
+        },
+        "links": {
+          ".write": "auth != null && (data.parent().child('meta/ownerUid').val() === auth.uid || newData.parent().child('meta/ownerUid').val() === auth.uid)"
+        },
+        "timer": {
+          ".write": "auth != null && (data.parent().child('meta/ownerUid').val() === auth.uid || newData.parent().child('meta/ownerUid').val() === auth.uid)"
+        },
+        "screen": {
+          ".write": "auth != null && (data.parent().child('meta/ownerUid').val() === auth.uid || newData.parent().child('meta/ownerUid').val() === auth.uid)"
+        },
+        "summary": {
+          ".write": "auth != null && (data.parent().child('meta/ownerUid').val() === auth.uid || newData.parent().child('meta/ownerUid').val() === auth.uid)"
+        },
+        "events": {
+          ".write": "auth != null && (data.parent().child('meta/ownerUid').val() === auth.uid || newData.parent().child('meta/ownerUid').val() === auth.uid)"
+        },
+        "members": {
+          ".write": "auth != null && (data.parent().child('meta/ownerUid').val() === auth.uid || newData.parent().child('meta/ownerUid').val() === auth.uid)",
+          "$memberId": {
+            ".read": "auth != null && (auth.uid === $memberId || data.parent().parent().child('meta/ownerUid').val() === auth.uid)",
+            ".write": "auth != null && ((auth.uid === $memberId && (data.parent().parent().child('meta/visibility').val() === 'public' || data.parent().parent().child('meta/ownerUid').val() === auth.uid || data.parent().child(auth.uid).exists() || newData.child('inviteCodeUsed').val() === data.parent().parent().child('meta/inviteCode').val())) || data.parent().parent().child('meta/ownerUid').val() === auth.uid || newData.parent().parent().child('meta/ownerUid').val() === auth.uid)"
+          }
+        },
+        "attendance": {
+          ".write": "auth != null && (data.parent().child('meta/ownerUid').val() === auth.uid || newData.parent().child('meta/ownerUid').val() === auth.uid)",
+          "$memberId": {
+            ".read": "auth != null && (auth.uid === $memberId || data.parent().parent().child('meta/ownerUid').val() === auth.uid)",
+            ".write": "auth != null && ((auth.uid === $memberId && (data.parent().parent().child('meta/visibility').val() === 'public' || data.parent().parent().child('meta/ownerUid').val() === auth.uid || data.parent().parent().child('members').child(auth.uid).exists() || newData.child('inviteCodeUsed').val() === data.parent().parent().child('meta/inviteCode').val())) || data.parent().parent().child('meta/ownerUid').val() === auth.uid || newData.parent().parent().child('meta/ownerUid').val() === auth.uid)"
+          }
+        }
+      }
+    }
+  }
+}

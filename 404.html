@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Redirecting…</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <script>
+      (function redirectToHashRoute() {
+        const locationUrl = new URL(window.location.href);
+        const segments = locationUrl.pathname.split("/").filter(Boolean);
+        const repoBase =
+          segments.length > 0 && segments[0] !== "class" && segments[0] !== "room"
+            ? `/${segments[0]}`
+            : "";
+        const routeSegments = repoBase ? segments.slice(1) : segments;
+        const routePath = routeSegments.length ? `/${routeSegments.join("/")}` : "/";
+        const target =
+          `${locationUrl.origin}${repoBase}/#${routePath}${locationUrl.search}${locationUrl.hash}`;
+        window.location.replace(target);
+      })();
+    </script>
+  </head>
+  <body></body>
+</html>

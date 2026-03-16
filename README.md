@@ -8,10 +8,12 @@ This repo is wired to the Firebase project `zoomaid-classroom-20260316`.
 
 - Login screen with anonymous sign-in and a persistent display name
 - Classroom gallery with thumbnail cards for owned, joined, and public rooms
+- Teacher-only console access with registered teacher mode and a guest-teacher shortcut
 - Invite links and short join tokens for private classrooms
 - Live whiteboard with pen, eraser, blank/grid background, and screen annotation
 - Shared links/resources panel for repos, datasheets, tasks, and docs
 - Realtime attendance presence while the classroom page is open
+- Live announcements, session phase state, and student hand-raise signals
 - Focus timer for sprints and lab blocks
 - Session board for topic, objective, prompt, and checklist
 - End-of-class Markdown summary export built from attendance, resources, and teacher events
@@ -21,7 +23,7 @@ This repo is wired to the Firebase project `zoomaid-classroom-20260316`.
 - Frontend: plain HTML/CSS/JS
 - Hosting: GitHub Pages
 - Shared state: Firebase Realtime Database
-- Auth: Firebase Anonymous Authentication
+- Auth: Firebase Anonymous Authentication for students plus app-level teacher access
 - Local preview: `npm start`
 
 There is no custom backend in the deployed version. The local `server.js` only exists to preview the static app during development.
@@ -103,10 +105,10 @@ The `.nojekyll` file keeps Pages in plain static mode, and `404.html` redirects 
 ### Teacher
 
 1. Open the site and enter a display name.
-2. Switch to `Teacher` mode if needed.
+2. Unlock teacher access using `Register`, `Sign in`, or `Guest`.
 3. Create a classroom.
 4. Share the student link, short join token, or QR.
-5. Run the live board, screen relay, timer, links, and session notes.
+5. Run the live board, screen relay, timer, announcements, links, and session notes.
 6. Generate the session summary when class ends.
 
 ### Student
@@ -118,13 +120,14 @@ The `.nojekyll` file keeps Pages in plain static mode, and `404.html` redirects 
 
 ## Security Model
 
-- Anonymous auth keeps entry friction low.
-- Teacher control is tied to the Firebase user that created the classroom.
+- Anonymous auth keeps student entry friction low.
+- Teacher console access now requires either registered teacher access or guest-teacher mode.
+- Classroom ownership is tied to the active teacher access, with a legacy fallback for older rooms.
 - Public classrooms are open from the gallery.
 - Invite-only classrooms are not meant to appear in the public gallery flow; the invite link adds the student to the classroom membership list.
 - Attendance writes are per-user presence records while the page is open.
 
-This is a practical classroom tool, not a high-security system. If you need stronger identity guarantees, swap anonymous auth for Google sign-in or add a backend to broker invites.
+This is still a practical classroom tool, not a high-security identity system. Teacher registration is implemented in a static-site-friendly way so the app can stay on GitHub Pages without a custom backend. If you need stronger identity guarantees, swap it for Google sign-in or add a backend to broker invites.
 
 ## Summary Export
 

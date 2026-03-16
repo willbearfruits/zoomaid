@@ -3,6 +3,7 @@ const app = document.querySelector("#app");
 const PALETTE = ["#2056c7", "#0f766e", "#d97706", "#b91c1c", "#111827"];
 const STORAGE_KEYS = {
   profile: "zoomaid-profile",
+  teacherAccess: "zoomaid-teacher-access",
   roomPrefix: "zoomaid-room-cache-",
 };
 
@@ -16,6 +17,7 @@ const state = {
   refs: {},
   noticeTimer: 0,
   profile: normalizeProfile(readJson(STORAGE_KEYS.profile, {})),
+  teacherAccess: normalizeTeacherAccess(readJson(STORAGE_KEYS.teacherAccess, {})),
   summaries: [],
   classroom: null,
   activeClassroomId: "",
@@ -25,6 +27,12 @@ const state = {
     subject: "",
     description: "",
     visibility: getAppConfig().defaultVisibility || "invite",
+  },
+  teacherPanelMode: "signin",
+  teacherDrafts: {
+    email: "",
+    password: "",
+    guestLabel: "",
   },
   drawing: {
     tool: "draw",
@@ -47,6 +55,7 @@ const state = {
     profile: null,
     summaries: null,
     classroom: null,
+    teacherSession: null,
   },
   timerInterval: 0,
   presenceCleanup: null,
@@ -182,6 +191,7 @@ function subscribeAuth() {
 
     state.user = user;
     await bootstrapProfile();
+    await bootstrapTeacherAccess();
     void renderCurrentRoute();
   });
 }
@@ -215,7 +225,6 @@ async function bootstrapProfile() {
   if (!remoteProfile.name && state.profile.name) {
     await updateOwnProfile({
       name: state.profile.name,
-      preferredRole: state.profile.preferredRole,
       classrooms: state.profile.classrooms,
       updatedAt: timestampValue(),
     }).catch(() => {});
@@ -226,8 +235,7 @@ async function bootstrapProfile() {
     const remote = snapshot.val() || {};
     state.profile = normalizeProfile({
       name: remote.name || state.profile.name,
-      preferredRole:
-        state.profile.preferredRole || remote.preferredRole || "student",
+      preferredRole: remote.preferredRole || state.profile.preferredRole || "student",
       classrooms: {
         ...(remote.classrooms || {}),
         ...(state.profile.classrooms || {}),
@@ -240,6 +248,43 @@ async function bootstrapProfile() {
   };
   profileRef.on("value", handler);
   state.subs.profile = () => profileRef.off("value", handler);
+}
+
+async function bootstrapTeacherAccess() {
+  if (!state.user) {
+    return;
+  }
+
+  const sessionRef = state.db.ref(`teacherSessions/${state.user.uid}`);
+  let remoteSession = {};
+
+  try {
+    const snapshot = await sessionRef.once("value");
+    remoteSession = snapshot.val() || {};
+  } catch (error) {
+    // Keep the local value if the teacher session read fails.
+  }
+
+  state.teacherAccess = normalizeTeacherAccess(remoteSession);
+  persistTeacherAccessLocal();
+
+  resetSubscription("teacherSession");
+  const handler = (snapshot) => {
+    state.teacherAccess = normalizeTeacherAccess(snapshot.val() || {});
+    persistTeacherAccessLocal();
+
+    if (state.route.kind === "dashboard") {
+      renderDashboard();
+    }
+
+    if (state.route.kind === "classroom" && state.classroom) {
+      ensureClassroomRendered();
+      updateClassroomView();
+    }
+  };
+
+  sessionRef.on("value", handler);
+  state.subs.teacherSession = () => sessionRef.off("value", handler);
 }
 
 async function renderCurrentRoute() {
@@ -409,6 +454,7 @@ async function openClassroomRoute(token) {
 function applyClassroomSnapshot(classroomId, rawRoom) {
   state.classroom = normalizeClassroom(classroomId, rawRoom);
   persistRoomCache(classroomId, rawRoom);
+  maybeAdoptLegacyTeacherOwnership().catch(() => {});
   ensureClassroomRendered();
   setConnectionStatus("live", state.classroom.meta.status === "ended" ? "Ended" : "Live");
   updateClassroomView();
@@ -418,6 +464,30 @@ function applyClassroomSnapshot(classroomId, rawRoom) {
   }
 
   ensureAttendancePresence(state.classroom).catch(() => {});
+}
+
+async function maybeAdoptLegacyTeacherOwnership() {
+  if (
+    !state.classroom ||
+    !state.user ||
+    !isTeacherAccessActive() ||
+    state.classroom.meta.ownerTeacherId ||
+    state.classroom.meta.ownerUid !== state.user.uid
+  ) {
+    return;
+  }
+
+  await updateClassroomAndSummary(
+    state.classroom.meta.id,
+    {
+      "meta/ownerTeacherId": state.teacherAccess.teacherId,
+      "meta/updatedAt": timestampValue(),
+    },
+    {
+      ownerTeacherId: state.teacherAccess.teacherId,
+      updatedAt: timestampValue(),
+    },
+  );
 }
 
 function renderSetupScreen() {
@@ -532,6 +602,186 @@ function renderLoadingScreen(message) {
   `);
 }
 
+function renderTeacherAccessPanel(context = "dashboard") {
+  if (isTeacherAccessActive()) {
+    return `
+      <section class="card sidebar-card teacher-access-card">
+        <div class="section-head">
+          <div>
+            <p class="eyebrow">Teacher access</p>
+            <h2>${escapeHtml(getTeacherAccessModeLabel())}</h2>
+            <p class="muted">${escapeHtml(teacherModeDescription())}</p>
+          </div>
+          <span class="pill live">Console ready</span>
+        </div>
+        <div class="stat-grid compact-stats">
+          <div class="stat-box">
+            <strong>Identity</strong>
+            <div>${escapeHtml(getTeacherAccessLabel())}</div>
+          </div>
+          <div class="stat-box">
+            <strong>Sign-in</strong>
+            <div>${escapeHtml(state.teacherAccess.emailHint || "Guest mode")}</div>
+          </div>
+        </div>
+        <div class="button-row">
+          <button class="button secondary" type="button" id="teacherLogoutButton">Leave teacher mode</button>
+        </div>
+      </section>
+    `;
+  }
+
+  const title = context === "login" ? "Teacher console access" : "Unlock teacher console";
+  const description =
+    context === "login"
+      ? "Students can continue with a name only. Teachers unlock the console here, or use guest mode for today."
+      : "Create and manage classrooms only after unlocking teacher access.";
+  const mode = state.teacherPanelMode;
+
+  return `
+    <section class="card sidebar-card teacher-access-card">
+      <div class="section-head">
+        <div>
+          <p class="eyebrow">Teacher access</p>
+          <h2>${escapeHtml(title)}</h2>
+          <p class="muted">${escapeHtml(description)}</p>
+        </div>
+        <span class="pill">Locked</span>
+      </div>
+      <div class="segmented" id="teacherAccessModeSwitch">
+        <button type="button" data-teacher-mode="signin" class="${mode === "signin" ? "active" : ""}">Sign in</button>
+        <button type="button" data-teacher-mode="register" class="${mode === "register" ? "active" : ""}">Register</button>
+        <button type="button" data-teacher-mode="guest" class="${mode === "guest" ? "active" : ""}">Guest</button>
+      </div>
+      <form id="teacherAccessForm" class="stack">
+        ${
+          mode === "guest"
+            ? `
+              <div class="field">
+                <label for="guestTeacherLabelInput">Guest teacher label</label>
+                <input
+                  id="guestTeacherLabelInput"
+                  class="input"
+                  maxlength="80"
+                  value="${escapeHtml(state.teacherDrafts.guestLabel)}"
+                  placeholder="Optional label for today's session"
+                />
+              </div>
+              <div class="detail-block">
+                <strong>Quick note</strong>
+                <div>Guest mode is fast and local-browser friendly. Use it for today's class if you do not want to register yet.</div>
+              </div>
+            `
+            : `
+              <div class="field">
+                <label for="teacherEmailInput">Teacher email</label>
+                <input
+                  id="teacherEmailInput"
+                  class="input"
+                  type="email"
+                  autocomplete="username"
+                  value="${escapeHtml(state.teacherDrafts.email)}"
+                  placeholder="teacher@example.com"
+                />
+              </div>
+              <div class="field">
+                <label for="teacherPasswordInput">Teacher password</label>
+                <input
+                  id="teacherPasswordInput"
+                  class="input"
+                  type="password"
+                  autocomplete="${mode === "register" ? "new-password" : "current-password"}"
+                  value="${escapeHtml(state.teacherDrafts.password)}"
+                  placeholder="${mode === "register" ? "Create a password" : "Enter your password"}"
+                />
+              </div>
+              <div class="detail-block">
+                <strong>${mode === "register" ? "Registration model" : "Sign-in model"}</strong>
+                <div>This is a lightweight static-site teacher login for GitHub Pages. Students do not need it.</div>
+              </div>
+            `
+        }
+        <div class="button-row">
+          <button class="button" type="submit">${
+            mode === "register" ? "Register teacher" : mode === "guest" ? "Enter guest teacher mode" : "Unlock console"
+          }</button>
+        </div>
+      </form>
+    </section>
+  `;
+}
+
+function bindTeacherAccessControls(renderTarget) {
+  renderTarget.querySelector("#teacherAccessModeSwitch")?.addEventListener("click", (event) => {
+    const mode = event.target.getAttribute("data-teacher-mode");
+    if (!mode) {
+      return;
+    }
+
+    state.teacherPanelMode = mode;
+    if (state.viewKey === "login") {
+      renderLoginScreen();
+      return;
+    }
+
+    renderDashboard();
+  });
+
+  renderTarget.querySelector("#teacherEmailInput")?.addEventListener("input", (event) => {
+    state.teacherDrafts.email = event.target.value;
+  });
+
+  renderTarget.querySelector("#teacherPasswordInput")?.addEventListener("input", (event) => {
+    state.teacherDrafts.password = event.target.value;
+  });
+
+  renderTarget.querySelector("#guestTeacherLabelInput")?.addEventListener("input", (event) => {
+    state.teacherDrafts.guestLabel = event.target.value;
+  });
+
+  renderTarget.querySelector("#teacherAccessForm")?.addEventListener("submit", async (event) => {
+    event.preventDefault();
+
+    try {
+      if (state.teacherPanelMode === "register") {
+        await registerTeacherAccess(state.teacherDrafts.email, state.teacherDrafts.password);
+        showNotice("Teacher access registered on this browser.");
+      } else if (state.teacherPanelMode === "guest") {
+        await startGuestTeacherAccess();
+        showNotice("Guest teacher mode is active.");
+      } else {
+        await signInTeacherAccess(state.teacherDrafts.email, state.teacherDrafts.password);
+        showNotice("Teacher console unlocked.");
+      }
+
+      state.teacherDrafts.password = "";
+      if (state.viewKey === "login") {
+        renderLoginScreen();
+      } else {
+        renderDashboard();
+      }
+    } catch (error) {
+      showNotice(error.message || "Teacher access failed.", true);
+    }
+  });
+
+  renderTarget.querySelector("#teacherLogoutButton")?.addEventListener("click", async () => {
+    await clearTeacherAccess();
+    if (state.viewKey === "login") {
+      renderLoginScreen();
+      return;
+    }
+
+    if (state.route.kind === "classroom" && state.classroom) {
+      ensureClassroomRendered();
+      updateClassroomView();
+    } else {
+      renderDashboard();
+    }
+    showNotice("Teacher mode cleared for this browser.");
+  });
+}
+
 function renderLoginScreen() {
   if (state.viewKey !== "login") {
     state.viewKey = "login";
@@ -546,84 +796,74 @@ function renderLoginScreen() {
 
   renderPage(`
     <main class="page-shell auth-page">
-      <div class="login-grid">
-        <section class="card hero-card">
+      <div class="login-grid elevated-login">
+        <section class="card hero-card auth-hero-shell">
+          <div class="hero-status-row">
+            <span class="pill live">Realtime classroom</span>
+            <span class="pill">${escapeHtml(getTeacherAccessModeLabel())}</span>
+            <span class="pill">${escapeHtml(state.user?.isAnonymous ? "Anonymous student auth" : "Connected")}</span>
+          </div>
           <p class="eyebrow">Classroom hub</p>
-          <h1>Enter once, then pick the classroom you teach in or join.</h1>
+          <h1>Teach from one clean console. Let students walk straight into the room.</h1>
           <p class="muted">
-            This app keeps friction low: anonymous sign-in, one name field, a classroom gallery,
-            invite links, live annotation, attendance, resource drops, and a session summary at the end.
+            ZoomAid now separates student entry from teacher control. Students join with a name, while teachers
+            unlock the console with registered access or a fast guest mode for today.
           </p>
           <div class="feature-grid">
             <article class="feature-box">
-              <h3>Teacher flow</h3>
-              <p>Create a room, share the student link or QR, and run the live board beside Meet or Zoom.</p>
+              <h3>Live board + screen ink</h3>
+              <p>Annotate over the board or a shared screen frame without sending students around multiple tools.</p>
             </article>
             <article class="feature-box">
-              <h3>Student flow</h3>
-              <p>Open the hub, choose a room, or follow an invite link and stay on the shared classroom page.</p>
+              <h3>Teacher gate</h3>
+              <p>The console is no longer tied to a casual role toggle. Teacher access is explicit.</p>
             </article>
             <article class="feature-box">
-              <h3>Live collaboration</h3>
-              <p>Board notes, links, timers, and screen annotations update in realtime across the class.</p>
+              <h3>Classroom signals</h3>
+              <p>Announcements and raised hands stay visible inside the room instead of getting lost in chat.</p>
             </article>
             <article class="feature-box">
-              <h3>Course wrap-up</h3>
-              <p>Generate a practical Markdown summary with attendance, resources, and the teaching timeline.</p>
+              <h3>Session wrap-up</h3>
+              <p>Keep the resources, attendance, and timeline aligned for a clean end-of-class summary.</p>
             </article>
           </div>
         </section>
 
-        <section class="card panel-card">
-          <h2>Enter the classroom hub</h2>
-          <p class="muted">
-            Your name and preferred mode stay in this browser. Teacher control remains tied to the browser
-            profile that created the class.
-          </p>
-          ${pendingTarget}
-          <form id="profileForm" class="stack">
-            <div class="field">
-              <label for="profileNameInput">Display name</label>
-              <input
-                id="profileNameInput"
-                class="input"
-                maxlength="80"
-                placeholder="Your name"
-                value="${escapeHtml(state.profile.name || "")}"
-              />
-            </div>
-            <div class="field">
-              <label>Default mode</label>
-              <div class="segmented" id="profileRoleSwitch">
-                <button type="button" data-profile-role="teacher" class="${
-                  state.profile.preferredRole === "teacher" ? "active" : ""
-                }">Teacher</button>
-                <button type="button" data-profile-role="student" class="${
-                  state.profile.preferredRole !== "teacher" ? "active" : ""
-                }">Student</button>
+        <div class="auth-side-stack">
+          <section class="card panel-card">
+            <div class="section-head">
+              <div>
+                <p class="eyebrow">Student entry</p>
+                <h2>Enter the hub</h2>
+                <p class="muted">Students only need a display name. Teachers can do that too, then unlock the console below.</p>
               </div>
+              <span class="pill">${pendingTarget ? "Invite ready" : "Open access"}</span>
             </div>
-            <div class="button-row">
-              <button class="button" type="submit">Continue</button>
-            </div>
-          </form>
-        </section>
+            ${pendingTarget}
+            <form id="profileForm" class="stack">
+              <div class="field">
+                <label for="profileNameInput">Display name</label>
+                <input
+                  id="profileNameInput"
+                  class="input"
+                  maxlength="80"
+                  placeholder="Your name"
+                  value="${escapeHtml(state.profile.name || "")}"
+                />
+              </div>
+              <div class="button-row">
+                <button class="button" type="submit">Continue to classrooms</button>
+              </div>
+            </form>
+          </section>
+
+          ${renderTeacherAccessPanel("login")}
+        </div>
       </div>
     </main>
   `);
 
-  const roleSwitch = document.querySelector("#profileRoleSwitch");
   const profileForm = document.querySelector("#profileForm");
-
-  roleSwitch?.addEventListener("click", (event) => {
-    const role = event.target.getAttribute("data-profile-role");
-    if (!role) {
-      return;
-    }
-
-    state.profile.preferredRole = role;
-    renderLoginScreen();
-  });
 
   profileForm?.addEventListener("submit", async (event) => {
     event.preventDefault();
@@ -640,54 +880,73 @@ function renderLoginScreen() {
 
     await updateOwnProfile({
       name: state.profile.name,
-      preferredRole: state.profile.preferredRole,
       updatedAt: timestampValue(),
     }).catch(() => {});
 
     void renderCurrentRoute();
   });
+
+  bindTeacherAccessControls(document);
 }
 
 function renderDashboard() {
   state.viewKey = "dashboard";
 
   const myClassroomIds = new Set(Object.keys(state.profile.classrooms || {}));
+  const teacherOwnedIds = new Set(
+    isTeacherAccessActive()
+      ? state.summaries
+          .filter((summary) =>
+            summary.ownerTeacherId
+              ? summary.ownerTeacherId === state.teacherAccess.teacherId
+              : summary.ownerUid === state.user?.uid,
+          )
+          .map((summary) => summary.id)
+      : [],
+  );
+  const accessibleIds = new Set([...myClassroomIds, ...teacherOwnedIds]);
   const myClassrooms = state.summaries
-    .filter((summary) => myClassroomIds.has(summary.id))
+    .filter((summary) => accessibleIds.has(summary.id))
     .sort(sortSummaries);
   const publicClassrooms = state.summaries
     .filter(
       (summary) =>
-        summary.visibility === "public" && !myClassroomIds.has(summary.id),
+        summary.visibility === "public" && !accessibleIds.has(summary.id),
     )
     .sort(sortSummaries);
+  const teacherActive = isTeacherAccessActive();
+  const liveCount = state.summaries.filter((summary) => summary.status === "live").length;
 
   renderPage(`
     <main class="page-shell">
-      <header class="card dashboard-header">
-        <div>
+      <header class="card dashboard-header dashboard-hero">
+        <div class="dashboard-hero-copy">
           <p class="eyebrow">Classroom hub</p>
-          <h1>Choose a classroom</h1>
+          <h1>Choose a room and run the whole class from one page.</h1>
           <p class="brand-meta">
-            Run your own live room or enter one you were invited to. Shared links, the board, attendance,
-            timer, and screen annotation stay inside the same classroom page.
+            Boards, links, attendance, announcements, raised hands, timers, and screen annotation stay in one realtime classroom shell.
           </p>
+          <div class="hero-stats">
+            <div class="stat-box">
+              <strong>Live rooms</strong>
+              <div>${escapeHtml(String(liveCount))}</div>
+            </div>
+            <div class="stat-box">
+              <strong>Your rooms</strong>
+              <div>${escapeHtml(String(myClassrooms.length))}</div>
+            </div>
+            <div class="stat-box">
+              <strong>Teacher access</strong>
+              <div>${escapeHtml(teacherActive ? "Ready" : "Locked")}</div>
+            </div>
+          </div>
         </div>
-        <div class="identity-panel">
+        <div class="identity-panel elevated-panel">
           <div class="identity-meta">
             <span class="pill">${escapeHtml(state.profile.name)}</span>
-            <span class="pill ${
-              state.profile.preferredRole === "teacher" ? "live" : ""
-            }">${state.profile.preferredRole === "teacher" ? "Teacher mode" : "Student mode"}</span>
+            <span class="pill ${teacherActive ? "live" : ""}">${escapeHtml(getTeacherAccessModeLabel())}</span>
           </div>
-          <div class="segmented" id="modeSwitch">
-            <button type="button" data-mode="teacher" class="${
-              state.profile.preferredRole === "teacher" ? "active" : ""
-            }">Teacher</button>
-            <button type="button" data-mode="student" class="${
-              state.profile.preferredRole !== "teacher" ? "active" : ""
-            }">Student</button>
-          </div>
+          <p class="muted compact-copy">${escapeHtml(teacherModeDescription())}</p>
           <div class="button-row">
             <button class="button secondary" type="button" id="resetSessionButton">Reset local session</button>
           </div>
@@ -719,7 +978,7 @@ function renderDashboard() {
           </section>
 
           ${
-            state.profile.preferredRole === "teacher"
+            teacherActive
               ? `
                 <section class="card sidebar-card">
                   <h2>Create a classroom</h2>
@@ -773,17 +1032,17 @@ function renderDashboard() {
                   </form>
                 </section>
               `
-              : `
-                <section class="card sidebar-card">
-                  <h2>How students use it</h2>
-                  <ul class="helper-list">
-                    <li>Open the classroom beside Meet or Zoom and keep it pinned during class.</li>
-                    <li>Follow the board, timer, resources, and screen notes without switching tabs repeatedly.</li>
-                    <li>Re-open the same classroom later from “Your classrooms” if the teacher keeps using it.</li>
-                  </ul>
-                </section>
-              `
+              : renderTeacherAccessPanel("dashboard")
           }
+
+          <section class="card sidebar-card">
+            <h2>How students use it</h2>
+            <ul class="helper-list">
+              <li>Open the classroom beside Meet or Zoom and keep it pinned during class.</li>
+              <li>Follow the board, timer, resources, and screen notes without switching tabs repeatedly.</li>
+              <li>Use raised hand when you need help instead of interrupting the main flow.</li>
+            </ul>
+          </section>
         </aside>
 
         <section class="dashboard-main">
@@ -822,21 +1081,6 @@ function renderDashboard() {
       </section>
     </main>
   `);
-
-  document.querySelector("#modeSwitch")?.addEventListener("click", async (event) => {
-    const mode = event.target.getAttribute("data-mode");
-    if (!mode) {
-      return;
-    }
-
-    state.profile.preferredRole = mode;
-    persistProfileLocal();
-    renderDashboard();
-    await updateOwnProfile({
-      preferredRole: mode,
-      updatedAt: timestampValue(),
-    }).catch(() => {});
-  });
 
   document.querySelector("#joinInput")?.addEventListener("input", (event) => {
     state.dashboardDrafts.joinInput = event.target.value;
@@ -881,6 +1125,7 @@ function renderDashboard() {
     });
 
   document.querySelector("#resetSessionButton")?.addEventListener("click", resetLocalSession);
+  bindTeacherAccessControls(document);
 
   document.querySelectorAll("[data-open-classroom]").forEach((button) => {
     button.addEventListener("click", () => {
@@ -894,7 +1139,12 @@ function renderDashboard() {
 function renderClassroomCard(summary, isMine) {
   const label = summary.status === "ended" ? "View room" : isMine ? "Open room" : "Join room";
   const visibilityTag = summary.visibility === "public" ? "Public" : "Invite only";
-  const role = state.profile.classrooms?.[summary.id]?.role || (summary.ownerUid === state.user?.uid ? "teacher" : "student");
+  const storedRole = state.profile.classrooms?.[summary.id]?.role;
+  const teacherOwnerMatch = summary.ownerTeacherId
+    ? summary.ownerTeacherId === state.teacherAccess.teacherId && isTeacherAccessActive()
+    : summary.ownerUid === state.user?.uid;
+  const role = teacherOwnerMatch ? "teacher" : storedRole || "student";
+  const ownershipTag = teacherOwnerMatch ? "Teacher" : storedRole === "teacher" ? "Owned" : isMine ? "Joined" : "";
 
   return `
     <article class="class-card">
@@ -917,13 +1167,8 @@ function renderClassroomCard(summary, isMine) {
         <div class="chip-row">
           <span class="tag">${summary.status === "ended" ? "Ended" : "Live"}</span>
           <span class="tag">${escapeHtml(visibilityTag)}</span>
-          ${
-            role === "teacher"
-              ? `<span class="tag">Teacher</span>`
-              : isMine
-                ? `<span class="tag">Joined</span>`
-                : ""
-          }
+          <span class="tag">${escapeHtml(formatSessionPhase(summary.phase))}</span>
+          ${ownershipTag ? `<span class="tag">${escapeHtml(ownershipTag)}</span>` : ""}
         </div>
         <div>
           <h3>${escapeHtml(summary.title)}</h3>
@@ -974,6 +1219,7 @@ function renderClassroomShell(role) {
             <button class="button secondary" type="button" id="backToHubButton">Back to classes</button>
             <span class="pill ${teacherMode ? "live" : ""}">${teacherMode ? "Teacher console" : "Student view"}</span>
             <span class="pill">${room.meta.visibility === "public" ? "Public" : "Invite only"}</span>
+            <span class="pill">${escapeHtml(formatSessionPhase(room.meta.phase))}</span>
             <span class="pill ${room.meta.status === "ended" ? "" : "live"}">${room.meta.status === "ended" ? "Ended" : "Live"}</span>
           </div>
           <p class="eyebrow">Classroom</p>
@@ -985,6 +1231,8 @@ function renderClassroomShell(role) {
           <span id="statusText">Connecting</span>
         </div>
       </header>
+
+      <section class="card announcement-banner" id="announcementBanner"></section>
 
       <section class="classroom-layout">
         <section class="card canvas-card">
@@ -1069,7 +1317,7 @@ function renderClassroomShell(role) {
                       <button class="button secondary" type="button" data-copy-target="joinCodeField">Copy</button>
                     </div>
                   </div>
-                  <p class="small">Teacher rights stay with the browser profile that created this classroom.</p>
+                  <p class="small">Teacher control follows the active teacher access that owns this classroom.</p>
                 </section>
               `
               : `
@@ -1079,6 +1327,45 @@ function renderClassroomShell(role) {
                 </section>
               `
           }
+
+          <section class="card sidebar-card">
+            <h2>Class pulse</h2>
+            ${
+              teacherMode
+                ? `
+                  <form id="announcementForm" class="stack">
+                    <div class="field">
+                      <label for="phaseSelect">Session phase</label>
+                      <select id="phaseSelect" class="select">
+                        <option value="lecture">Lecture</option>
+                        <option value="lab">Lab</option>
+                        <option value="qa">Q&amp;A</option>
+                        <option value="break">Break</option>
+                      </select>
+                    </div>
+                    <div class="field">
+                      <label for="announcementInput">Live announcement</label>
+                      <textarea id="announcementInput" class="textarea" placeholder="Post a note like 'Switch to schematic view' or 'Break for 5 min'."></textarea>
+                    </div>
+                    <div class="button-row">
+                      <button class="button" type="submit">Post update</button>
+                      <button class="button secondary" type="button" id="clearAnnouncementButton">Clear</button>
+                    </div>
+                  </form>
+                `
+                : `
+                  <div class="detail-block">
+                    <strong>Session phase</strong>
+                    <div id="studentPhaseLabel">Lecture</div>
+                    <div class="small" id="studentAnnouncementCopy">No live announcement right now.</div>
+                  </div>
+                  <div class="button-row">
+                    <button class="button" type="button" id="toggleHandRaiseButton">Raise hand</button>
+                  </div>
+                  <div class="small" id="handRaiseStatus">Your hand is currently down.</div>
+                `
+            }
+          </section>
 
           <section class="card sidebar-card">
             <h2>Attendance</h2>
@@ -1093,6 +1380,10 @@ function renderClassroomShell(role) {
                     <div class="stat-box">
                       <strong>Live now</strong>
                       <div id="attendanceLiveNow">0 online</div>
+                    </div>
+                    <div class="stat-box">
+                      <strong>Hands raised</strong>
+                      <div id="handsRaisedCount">0</div>
                     </div>
                   </div>
                   <ul id="attendanceList" class="attendance-list"></ul>
@@ -1246,6 +1537,7 @@ function renderClassroomShell(role) {
     notice: document.querySelector("#notice"),
     headerTitle: document.querySelector("#headerTitle"),
     headerMeta: document.querySelector("#headerMeta"),
+    announcementBanner: document.querySelector("#announcementBanner"),
     statusDot: document.querySelector("#statusDot"),
     statusText: document.querySelector("#statusText"),
     backToHubButton: document.querySelector("#backToHubButton"),
@@ -1264,8 +1556,17 @@ function renderClassroomShell(role) {
     attendanceHeadline: document.querySelector("#attendanceHeadline"),
     attendanceSignedIn: document.querySelector("#attendanceSignedIn"),
     attendanceLiveNow: document.querySelector("#attendanceLiveNow"),
+    handsRaisedCount: document.querySelector("#handsRaisedCount"),
     attendanceList: document.querySelector("#attendanceList"),
     studentPresenceCard: document.querySelector("#studentPresenceCard"),
+    phaseSelect: document.querySelector("#phaseSelect"),
+    announcementForm: document.querySelector("#announcementForm"),
+    announcementInput: document.querySelector("#announcementInput"),
+    clearAnnouncementButton: document.querySelector("#clearAnnouncementButton"),
+    studentPhaseLabel: document.querySelector("#studentPhaseLabel"),
+    studentAnnouncementCopy: document.querySelector("#studentAnnouncementCopy"),
+    toggleHandRaiseButton: document.querySelector("#toggleHandRaiseButton"),
+    handRaiseStatus: document.querySelector("#handRaiseStatus"),
     lessonDetails: document.querySelector("#lessonDetails"),
     linksList: document.querySelector("#linksList"),
     timerValue: document.querySelector("#timerValue"),
@@ -1318,8 +1619,16 @@ function bindClassroomControls(role) {
   });
 
   if (role !== "teacher") {
+    state.refs.toggleHandRaiseButton?.addEventListener("click", toggleHandRaise);
     return;
   }
+
+  state.refs.announcementForm?.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    await updateAnnouncementState();
+  });
+
+  state.refs.clearAnnouncementButton?.addEventListener("click", clearAnnouncementState);
 
   renderColorSwatches();
   refreshToolbarState();
@@ -1429,9 +1738,10 @@ function updateClassroomView() {
   const teacherMode = getCurrentClassroomRole() === "teacher";
 
   state.refs.headerTitle.textContent = state.classroom.board.lessonTitle;
-  state.refs.headerMeta.textContent = `${teacherMode ? "Teacher console" : "Student board"} • Room ${state.classroom.meta.id.toUpperCase()} • ${state.classroom.board.currentTopic}`;
+  state.refs.headerMeta.textContent = `${teacherMode ? "Teacher console" : "Student board"} • Room ${state.classroom.meta.id.toUpperCase()} • ${formatSessionPhase(state.classroom.meta.phase)} • ${state.classroom.board.currentTopic}`;
 
   updatePresentationSurface();
+  updateAnnouncementPanel();
   updateRoomAccess();
   updateAttendance();
   updateTeacherBoardForm();
@@ -1492,6 +1802,7 @@ function updateAttendance() {
 
   const participants = state.classroom.attendance;
   const onlineCount = participants.filter((participant) => participant.online).length;
+  const raisedHands = state.classroom.signals;
 
   if (state.refs.attendanceHeadline) {
     state.refs.attendanceHeadline.textContent = `${onlineCount} student${
@@ -1506,6 +1817,9 @@ function updateAttendance() {
     if (state.refs.attendanceLiveNow) {
       state.refs.attendanceLiveNow.textContent = `${onlineCount} online`;
     }
+    if (state.refs.handsRaisedCount) {
+      state.refs.handsRaisedCount.textContent = String(raisedHands.length);
+    }
     if (state.refs.attendanceList) {
       state.refs.attendanceList.innerHTML = participants.length
         ? participants
@@ -1514,9 +1828,16 @@ function updateAttendance() {
                 <li class="attendance-item">
                   <div class="attendance-row">
                     <strong>${escapeHtml(participant.name)}</strong>
-                    <span class="presence-pill ${participant.online ? "live" : ""}">${
-                      participant.online ? "Online" : "Away"
-                    }</span>
+                    <div class="attendance-tags">
+                      ${
+                        raisedHands.some((signal) => signal.uid === participant.uid)
+                          ? `<span class="presence-pill warn">Hand raised</span>`
+                          : ""
+                      }
+                      <span class="presence-pill ${participant.online ? "live" : ""}">${
+                        participant.online ? "Online" : "Away"
+                      }</span>
+                    </div>
                   </div>
                   <div class="small">${
                     participant.online
@@ -1539,9 +1860,56 @@ function updateAttendance() {
       <div class="small">${
         state.classroom.meta.status === "ended"
           ? "This classroom has been marked ended."
-          : `${onlineCount} student${onlineCount === 1 ? "" : "s"} currently connected.`
+          : `${onlineCount} student${onlineCount === 1 ? "" : "s"} currently connected. ${raisedHands.length} hand${raisedHands.length === 1 ? "" : "s"} raised.`
       }</div>
     `;
+  }
+}
+
+function updateAnnouncementPanel() {
+  if (!state.classroom) {
+    return;
+  }
+
+  const announcement = state.classroom.announcement;
+  const teacherMode = getCurrentClassroomRole() === "teacher";
+  const ownSignal = state.classroom.signals.find((signal) => signal.uid === state.user?.uid);
+
+  if (state.refs.announcementBanner) {
+    if (announcement.message) {
+      state.refs.announcementBanner.innerHTML = `
+        <div class="announcement-copy">
+          <p class="eyebrow">Live announcement</p>
+          <strong>${escapeHtml(announcement.message)}</strong>
+          <div class="small">Posted by ${escapeHtml(announcement.updatedByName || "Teacher")} • ${escapeHtml(formatRelativeTime(announcement.updatedAt))}</div>
+        </div>
+      `;
+      state.refs.announcementBanner.classList.add("active");
+    } else {
+      state.refs.announcementBanner.innerHTML = "";
+      state.refs.announcementBanner.classList.remove("active");
+    }
+  }
+
+  if (state.refs.studentPhaseLabel) {
+    state.refs.studentPhaseLabel.textContent = formatSessionPhase(state.classroom.meta.phase);
+  }
+
+  if (state.refs.studentAnnouncementCopy) {
+    state.refs.studentAnnouncementCopy.textContent = announcement.message
+      ? `${announcement.message} • ${announcement.updatedByName || "Teacher"}`
+      : "No live announcement right now.";
+  }
+
+  if (state.refs.toggleHandRaiseButton) {
+    state.refs.toggleHandRaiseButton.textContent = ownSignal ? "Lower hand" : "Raise hand";
+    state.refs.toggleHandRaiseButton.classList.toggle("secondary", Boolean(ownSignal));
+  }
+
+  if (state.refs.handRaiseStatus) {
+    state.refs.handRaiseStatus.textContent = ownSignal
+      ? `Your hand is up${teacherMode ? "" : ` • updated ${formatRelativeTime(ownSignal.updatedAt)}`}.`
+      : "Your hand is currently down.";
   }
 }
 
@@ -1554,12 +1922,16 @@ function updateTeacherBoardForm() {
   writeInputValue(state.refs.topicInput, state.classroom.board.currentTopic);
   writeInputValue(state.refs.objectiveInput, state.classroom.board.objective);
   writeInputValue(state.refs.promptInput, state.classroom.board.prompt);
+  writeInputValue(state.refs.announcementInput, state.classroom.announcement.message);
   writeInputValue(
     state.refs.checklistInput,
     state.classroom.board.checklist.join("\n"),
   );
   writeInputValue(state.refs.timerLabelInput, state.classroom.timer.label || "Focus block");
   writeInputValue(state.refs.screenLabelInput, state.classroom.screen.label || "Screen relay");
+  if (state.refs.phaseSelect) {
+    state.refs.phaseSelect.value = normalizeSessionPhase(state.classroom.meta.phase);
+  }
 }
 
 function updateLessonDetails() {
@@ -1572,6 +1944,10 @@ function updateLessonDetails() {
     <div class="detail-block">
       <strong>Current topic</strong>
       <div>${escapeHtml(board.currentTopic || "No topic set yet.")}</div>
+    </div>
+    <div class="detail-block">
+      <strong>Session phase</strong>
+      <div>${escapeHtml(formatSessionPhase(state.classroom.meta.phase))}</div>
     </div>
     <div class="detail-block">
       <strong>Objective</strong>
@@ -2365,8 +2741,88 @@ async function updateClassroomVisibility(value) {
   });
 }
 
+async function updateAnnouncementState() {
+  if (!state.classroom || getCurrentClassroomRole() !== "teacher") {
+    return;
+  }
+
+  const phase = normalizeSessionPhase(state.refs.phaseSelect?.value || state.classroom.meta.phase);
+  const message = (state.refs.announcementInput?.value || "").trim().slice(0, 280);
+
+  await updateClassroomAndSummary(
+    state.classroom.meta.id,
+    {
+      "meta/phase": phase,
+      announcement: {
+        message,
+        updatedAt: timestampValue(),
+        updatedByName: state.profile.name,
+      },
+      "meta/updatedAt": timestampValue(),
+    },
+    {
+      phase,
+      updatedAt: timestampValue(),
+    },
+  );
+
+  await logTeacherEvent("announcement_updated", {
+    note: message ? `Updated announcement: ${message}` : `Changed session phase to ${phase}`,
+  });
+  showNotice(message ? "Announcement updated." : "Session phase updated.");
+}
+
+async function clearAnnouncementState() {
+  if (!state.classroom || getCurrentClassroomRole() !== "teacher") {
+    return;
+  }
+
+  await updateClassroomAndSummary(
+    state.classroom.meta.id,
+    {
+      announcement: {
+        message: "",
+        updatedAt: timestampValue(),
+        updatedByName: state.profile.name,
+      },
+      "meta/updatedAt": timestampValue(),
+    },
+    {
+      updatedAt: timestampValue(),
+    },
+  );
+
+  await logTeacherEvent("announcement_cleared", {
+    note: "Cleared live announcement",
+  });
+  showNotice("Announcement cleared.");
+}
+
+async function toggleHandRaise() {
+  if (!state.classroom || !state.user) {
+    return;
+  }
+
+  const existing = state.classroom.signals.find((signal) => signal.uid === state.user.uid);
+  const nextRaised = !existing;
+
+  await state.db.ref(`classrooms/${state.classroom.meta.id}/signals/${state.user.uid}`).set({
+    uid: state.user.uid,
+    name: state.profile.name,
+    handRaised: nextRaised,
+    updatedAt: timestampValue(),
+  });
+
+  showNotice(nextRaised ? "Hand raised." : "Hand lowered.");
+}
+
 async function createClassroom() {
   if (!state.user) {
+    return;
+  }
+
+  if (!isTeacherAccessActive()) {
+    showNotice("Unlock teacher access before creating a classroom.", true);
     return;
   }
 
@@ -2388,12 +2844,14 @@ async function createClassroom() {
     meta: {
       id: classroomId,
       ownerUid: state.user.uid,
+      ownerTeacherId: state.teacherAccess.teacherId,
       ownerName: state.profile.name,
       title,
       currentTopic: topic,
       description,
       visibility,
       inviteCode,
+      phase: "lecture",
       status: "live",
       createdAt: timestampValue(),
       updatedAt: timestampValue(),
@@ -2423,6 +2881,12 @@ async function createClassroom() {
       label: "",
       updatedAt: 0,
     },
+    announcement: {
+      message: "",
+      updatedAt: 0,
+      updatedByName: "",
+    },
+    signals: {},
     summary: {
       markdown: "",
       generatedAt: 0,
@@ -2453,11 +2917,13 @@ async function createClassroom() {
   const summaryRecord = {
     id: classroomId,
     ownerUid: state.user.uid,
+    ownerTeacherId: state.teacherAccess.teacherId,
     ownerName: state.profile.name,
     title,
     currentTopic: topic,
     description,
     visibility,
+    phase: "lecture",
     status: "live",
     createdAt: timestampValue(),
     updatedAt: timestampValue(),
@@ -2733,12 +3199,16 @@ function buildSessionSummary(classroom) {
   const checklistLines = classroom.board.checklist.length
     ? classroom.board.checklist.map((item) => `- ${item}`)
     : ["- No checklist items"];
+  const handRaiseLines = classroom.signals.length
+    ? classroom.signals.map((signal) => `- ${signal.name} (${formatClockTime(signal.updatedAt)})`)
+    : ["- No raised hands at summary time"];
 
   return [
     `# ${classroom.board.lessonTitle}`,
     "",
     `Teacher: ${classroom.meta.ownerName || "Unknown"}`,
     `Room: ${classroom.meta.id.toUpperCase()}`,
+    `Phase: ${formatSessionPhase(classroom.meta.phase)}`,
     `Status: ${classroom.meta.status === "ended" ? "Ended" : "Live"}`,
     `Generated: ${formatDateTime(Date.now())}`,
     "",
@@ -2746,12 +3216,16 @@ function buildSessionSummary(classroom) {
     `- Topic: ${classroom.board.currentTopic || "Not set"}`,
     `- Objective: ${classroom.board.objective || "Not set"}`,
     `- Prompt: ${classroom.board.prompt || "Not set"}`,
+    `- Announcement: ${classroom.announcement.message || "No live announcement"}`,
     "",
     "## Workbench Checklist",
     ...checklistLines,
     "",
     "## Attendance",
     ...attendanceLines,
+    "",
+    "## Raised Hands",
+    ...handRaiseLines,
     "",
     "## Shared Resources",
     ...linkLines,
@@ -3027,18 +3501,31 @@ function normalizeProfile(value) {
   };
 }
 
+function normalizeTeacherAccess(value) {
+  return {
+    active: Boolean(value?.active && value?.teacherId),
+    mode: value?.mode === "guest" ? "guest" : value?.mode === "registered" ? "registered" : "",
+    teacherId: typeof value?.teacherId === "string" ? value.teacherId : "",
+    label: typeof value?.label === "string" ? value.label.trim().slice(0, 80) : "",
+    emailHint: typeof value?.emailHint === "string" ? value.emailHint.trim().slice(0, 120) : "",
+    updatedAt: Number(value?.updatedAt || 0),
+  };
+}
+
 function normalizeClassroom(classroomId, room) {
   const meta = room.meta || {};
   return {
     meta: {
       id: sanitizeClassId(classroomId),
       ownerUid: meta.ownerUid || "",
+      ownerTeacherId: meta.ownerTeacherId || "",
       ownerName: meta.ownerName || "",
       title: meta.title || room.board?.lessonTitle || "Untitled classroom",
       currentTopic: meta.currentTopic || room.board?.currentTopic || "Live session",
       description: meta.description || "",
       visibility: meta.visibility === "public" ? "public" : "invite",
       inviteCode: sanitizeInviteCode(meta.inviteCode || ""),
+      phase: normalizeSessionPhase(meta.phase),
       status: meta.status === "ended" ? "ended" : "live",
       createdAt: meta.createdAt || 0,
       updatedAt: meta.updatedAt || 0,
@@ -3058,6 +3545,8 @@ function normalizeClassroom(classroomId, room) {
     attendance: normalizeAttendance(room.attendance),
     timer: normalizeTimer(room.timer),
     screen: normalizeScreen(room.screen),
+    announcement: normalizeAnnouncement(room.announcement),
+    signals: normalizeSignals(room.signals),
     summary: {
       markdown: room.summary?.markdown || "",
       generatedAt: room.summary?.generatedAt || 0,
@@ -3073,11 +3562,13 @@ function normalizeSummaries(value) {
     .map(([id, summary]) => ({
       id: sanitizeClassId(id),
       ownerUid: summary.ownerUid || "",
+      ownerTeacherId: summary.ownerTeacherId || "",
       ownerName: summary.ownerName || "",
       title: summary.title || "Untitled classroom",
       currentTopic: summary.currentTopic || "",
       description: summary.description || "",
       visibility: summary.visibility === "public" ? "public" : "invite",
+      phase: normalizeSessionPhase(summary.phase),
       status: summary.status === "ended" ? "ended" : "live",
       createdAt: summary.createdAt || 0,
       updatedAt: summary.updatedAt || 0,
@@ -3136,6 +3627,30 @@ function normalizeScreen(value) {
     label: value?.label || "",
     updatedAt: value?.updatedAt || 0,
   };
+}
+
+function normalizeAnnouncement(value) {
+  return {
+    message: value?.message || "",
+    updatedAt: value?.updatedAt || 0,
+    updatedByName: value?.updatedByName || "",
+  };
+}
+
+function normalizeSignals(value) {
+  return Object.values(value || {})
+    .map((signal) => ({
+      uid: signal.uid || "",
+      name: signal.name || "Unnamed",
+      handRaised: Boolean(signal.handRaised),
+      updatedAt: signal.updatedAt || 0,
+    }))
+    .filter((signal) => signal.handRaised);
+}
+
+function normalizeSessionPhase(value) {
+  const phase = String(value || "").toLowerCase();
+  return ["lecture", "lab", "qa", "break"].includes(phase) ? phase : "lecture";
 }
 
 function normalizeEvents(value) {
@@ -3205,10 +3720,71 @@ function sortSummaries(a, b) {
 
 function getCurrentClassroomRole() {
   if (!state.classroom || !state.user) {
-    return state.profile.preferredRole;
+    return isTeacherAccessActive() ? "teacher" : "student";
   }
 
-  return state.classroom.meta.ownerUid === state.user.uid ? "teacher" : "student";
+  return isTeacherForClassroom(state.classroom) ? "teacher" : "student";
+}
+
+function isTeacherAccessActive() {
+  return Boolean(state.teacherAccess.active && state.teacherAccess.teacherId);
+}
+
+function isTeacherForClassroom(classroom) {
+  if (!classroom || !state.user) {
+    return false;
+  }
+
+  if (
+    classroom.meta.ownerTeacherId &&
+    isTeacherAccessActive() &&
+    classroom.meta.ownerTeacherId === state.teacherAccess.teacherId
+  ) {
+    return true;
+  }
+
+  return !classroom.meta.ownerTeacherId && isTeacherAccessActive() && classroom.meta.ownerUid === state.user.uid;
+}
+
+function getTeacherAccessLabel() {
+  return state.teacherAccess.label || state.profile.name || "Teacher";
+}
+
+function getTeacherAccessModeLabel() {
+  if (state.teacherAccess.mode === "guest") {
+    return "Guest teacher";
+  }
+
+  if (state.teacherAccess.mode === "registered") {
+    return "Registered teacher";
+  }
+
+  return "Student only";
+}
+
+function formatSessionPhase(phase) {
+  switch (normalizeSessionPhase(phase)) {
+    case "lab":
+      return "Lab";
+    case "qa":
+      return "Q&A";
+    case "break":
+      return "Break";
+    default:
+      return "Lecture";
+  }
+}
+
+function teacherModeDescription() {
+  if (state.teacherAccess.mode === "guest") {
+    return "Guest teacher mode is active on this browser for quick setup today.";
+  }
+
+  if (state.teacherAccess.mode === "registered") {
+    return "Registered teacher access is active on this browser.";
+  }
+
+  return "Students can join with a name only. Teachers need to unlock console access.";
 }
 
 function refreshToolbarState() {
@@ -3309,8 +3885,140 @@ async function updateOwnProfile(patch) {
   await state.db.ref(`profiles/${state.user.uid}`).update(patch);
 }
 
+async function upsertTeacherAccount(account) {
+  if (!account.teacherId) {
+    return;
+  }
+
+  const ref = state.db.ref(`teacherAccounts/${account.teacherId}`);
+  const snapshot = await ref.once("value");
+
+  if (snapshot.exists()) {
+    await ref.update({
+      label: account.label,
+      emailHint: account.emailHint,
+      mode: account.mode,
+      updatedAt: timestampValue(),
+    });
+    return;
+  }
+
+  await ref.set({
+    teacherId: account.teacherId,
+    label: account.label,
+    emailHint: account.emailHint,
+    mode: account.mode,
+    createdAt: timestampValue(),
+    updatedAt: timestampValue(),
+  });
+}
+
+async function activateTeacherAccess(access) {
+  if (!state.user || !access.teacherId) {
+    return;
+  }
+
+  const teacherAccess = normalizeTeacherAccess({
+    active: true,
+    teacherId: access.teacherId,
+    mode: access.mode,
+    label: access.label,
+    emailHint: access.emailHint,
+    updatedAt: Date.now(),
+  });
+
+  await upsertTeacherAccount(teacherAccess);
+  await state.db.ref(`teacherSessions/${state.user.uid}`).set({
+    active: true,
+    teacherId: teacherAccess.teacherId,
+    mode: teacherAccess.mode,
+    label: teacherAccess.label,
+    emailHint: teacherAccess.emailHint,
+    updatedAt: timestampValue(),
+  });
+
+  state.teacherAccess = teacherAccess;
+  persistTeacherAccessLocal();
+}
+
+async function registerTeacherAccess(email, password) {
+  const normalizedEmail = normalizeEmail(email);
+  const normalizedPassword = String(password || "");
+
+  if (!normalizedEmail || !normalizedPassword) {
+    throw new Error("Enter an email and password for teacher access.");
+  }
+
+  if (normalizedPassword.length < 8) {
+    throw new Error("Teacher passwords must be at least 8 characters.");
+  }
+
+  const teacherId = await makeTeacherCredentialId(normalizedEmail, normalizedPassword);
+  const existing = await state.db.ref(`teacherAccounts/${teacherId}`).once("value");
+  if (existing.exists()) {
+    throw new Error("That teacher account already exists. Use sign in instead.");
+  }
+
+  await activateTeacherAccess({
+    teacherId,
+    mode: "registered",
+    label: state.profile.name || normalizedEmail,
+    emailHint: maskEmail(normalizedEmail),
+  });
+}
+
+async function signInTeacherAccess(email, password) {
+  const normalizedEmail = normalizeEmail(email);
+  const normalizedPassword = String(password || "");
+
+  if (!normalizedEmail || !normalizedPassword) {
+    throw new Error("Enter the teacher email and password.");
+  }
+
+  const teacherId = await makeTeacherCredentialId(normalizedEmail, normalizedPassword);
+  const snapshot = await state.db.ref(`teacherAccounts/${teacherId}`).once("value");
+  if (!snapshot.exists()) {
+    throw new Error("Teacher access was not found. Register first or try guest teacher.");
+  }
+
+  const account = snapshot.val() || {};
+  await activateTeacherAccess({
+    teacherId,
+    mode: account.mode === "guest" ? "guest" : "registered",
+    label: account.label || state.profile.name || normalizedEmail,
+    emailHint: account.emailHint || maskEmail(normalizedEmail),
+  });
+}
+
+async function startGuestTeacherAccess() {
+  if (!state.user) {
+    return;
+  }
+
+  const teacherId =
+    state.teacherAccess.mode === "guest" && state.teacherAccess.teacherId
+      ? state.teacherAccess.teacherId
+      : `guest-${makeClassroomId()}${makeClassroomId()}`;
+
+  await activateTeacherAccess({
+    teacherId,
+    mode: "guest",
+    label: state.profile.name || state.teacherDrafts.guestLabel || "Guest teacher",
+    emailHint: "Guest teacher",
+  });
+}
+
+async function clearTeacherAccess() {
+  if (state.user) {
+    await state.db.ref(`teacherSessions/${state.user.uid}`).remove().catch(() => {});
+  }
+
+  clearTeacherAccessLocal();
+}
+
 async function resetLocalSession() {
   clearLocalProfile();
+  await clearTeacherAccess();
   clearRoomCaches();
 
   if (state.auth) {
@@ -3369,10 +4077,30 @@ function persistProfileLocal() {
   }
 }
 
+function persistTeacherAccessLocal() {
+  try {
+    window.localStorage.setItem(
+      STORAGE_KEYS.teacherAccess,
+      JSON.stringify(state.teacherAccess),
+    );
+  } catch (error) {
+    // Ignore local storage failures.
+  }
+}
+
 function clearLocalProfile() {
   state.profile = normalizeProfile({});
   try {
     window.localStorage.removeItem(STORAGE_KEYS.profile);
+  } catch (error) {
+    // Ignore local storage failures.
+  }
+}
+
+function clearTeacherAccessLocal() {
+  state.teacherAccess = normalizeTeacherAccess({});
+  try {
+    window.localStorage.removeItem(STORAGE_KEYS.teacherAccess);
   } catch (error) {
     // Ignore local storage failures.
   }
@@ -3435,6 +4163,39 @@ function makeId() {
 
 function makeClassroomId() {
   return Math.random().toString(36).slice(2, 8).toLowerCase();
+}
+
+function normalizeEmail(value) {
+  return String(value || "").trim().toLowerCase();
+}
+
+function maskEmail(value) {
+  const email = normalizeEmail(value);
+  const [localPart, domain = ""] = email.split("@");
+  if (!localPart || !domain) {
+    return email;
+  }
+
+  const visible = localPart.slice(0, 2);
+  return `${visible}${"*".repeat(Math.max(localPart.length - 2, 2))}@${domain}`;
+}
+
+async function makeTeacherCredentialId(email, password) {
+  const source = `${window.ZoomAidFirebaseConfig?.projectId || "zoomaid"}::teacher::${normalizeEmail(
+    email,
+  )}::${String(password || "")}`;
+  const digest = await sha256Hex(source);
+  return `teacher-${digest.slice(0, 48)}`;
+}
+
+async function sha256Hex(value) {
+  const buffer = await window.crypto.subtle.digest(
+    "SHA-256",
+    new TextEncoder().encode(String(value || "")),
+  );
+  return Array.from(new Uint8Array(buffer))
+    .map((byte) => byte.toString(16).padStart(2, "0"))
+    .join("");
 }
 
 function makeInviteCode() {

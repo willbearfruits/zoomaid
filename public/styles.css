@@ -1,19 +1,23 @@
 :root {
   color-scheme: light;
-  --bg: #eef2f6;
+  --bg: #e8eef5;
+  --bg-strong: #dbe5f0;
   --surface: #ffffff;
-  --surface-alt: #f7f9fc;
-  --surface-muted: #f0f4f8;
-  --border: #d6dde7;
-  --border-strong: #bcc7d5;
-  --text: #1e2933;
-  --text-soft: #526171;
-  --accent: #2463cc;
+  --surface-alt: #f4f7fb;
+  --surface-muted: #ebf1f7;
+  --border: #cfd8e3;
+  --border-strong: #9fb2c8;
+  --text: #15212c;
+  --text-soft: #566679;
+  --accent: #1d60d1;
+  --accent-strong: #1146ad;
   --accent-soft: #dbe8ff;
   --success: #1f7a47;
+  --warning: #b47212;
   --danger: #b93a3a;
-  --shadow: 0 14px 38px rgba(15, 23, 42, 0.08);
-  --radius: 16px;
+  --shadow: 0 22px 56px rgba(15, 23, 42, 0.12);
+  --shadow-soft: 0 14px 30px rgba(15, 23, 42, 0.08);
+  --radius: 20px;
 }
 
 * {
@@ -28,10 +32,12 @@ body {
 
 body {
   background:
-    radial-gradient(circle at top left, rgba(36, 99, 204, 0.08), transparent 36%),
-    linear-gradient(180deg, #f5f7fb 0%, var(--bg) 100%);
+    radial-gradient(circle at top left, rgba(29, 96, 209, 0.12), transparent 26%),
+    radial-gradient(circle at top right, rgba(17, 70, 173, 0.08), transparent 22%),
+    linear-gradient(180deg, #f7f9fc 0%, var(--bg) 100%);
   color: var(--text);
   font-family: Arial, Helvetica, sans-serif;
+  background-attachment: fixed;
 }
 
 button,
@@ -53,7 +59,7 @@ a {
 .page-shell {
   max-width: 1380px;
   margin: 0 auto;
-  padding: 24px;
+  padding: 28px;
 }
 
 .notice-layer {
@@ -83,6 +89,16 @@ a {
   grid-template-columns: 1.15fr 0.85fr;
 }
 
+.elevated-login {
+  align-items: stretch;
+}
+
+.auth-side-stack {
+  display: grid;
+  gap: 18px;
+  align-content: start;
+}
+
 .dashboard-page,
 .classroom-page {
   display: grid;
@@ -94,6 +110,17 @@ a {
   border: 1px solid var(--border);
   border-radius: var(--radius);
   box-shadow: var(--shadow);
+  position: relative;
+  overflow: hidden;
+}
+
+.card::before {
+  content: "";
+  position: absolute;
+  inset: 0 0 auto 0;
+  height: 1px;
+  background: linear-gradient(90deg, rgba(29, 96, 209, 0.22), transparent 55%);
+  pointer-events: none;
 }
 
 .auth-hero,
@@ -310,20 +337,22 @@ a {
 .button {
   border: 1px solid transparent;
   border-radius: 12px;
-  background: var(--accent);
+  background: linear-gradient(180deg, var(--accent), var(--accent-strong));
   color: #ffffff;
   padding: 11px 16px;
   cursor: pointer;
   transition: transform 120ms ease, box-shadow 120ms ease, background 120ms ease;
+  box-shadow: 0 14px 22px rgba(29, 96, 209, 0.18);
+  font-weight: 700;
 }
 
 .button:hover {
   transform: translateY(-1px);
-  box-shadow: 0 10px 18px rgba(36, 99, 204, 0.16);
+  box-shadow: 0 16px 28px rgba(29, 96, 209, 0.22);
 }
 
 .button.secondary {
-  background: var(--surface-alt);
+  background: linear-gradient(180deg, #ffffff, #f7f9fc);
   border-color: var(--border);
   color: var(--text);
   box-shadow: none;
@@ -374,7 +403,7 @@ a {
   padding: 6px 10px;
   border-radius: 999px;
   border: 1px solid var(--border);
-  background: var(--surface-alt);
+  background: rgba(255, 255, 255, 0.82);
   color: var(--text-soft);
   font-size: 0.82rem;
 }
@@ -419,6 +448,36 @@ a {
   gap: 18px;
   justify-content: space-between;
   align-items: start;
+}
+
+.dashboard-hero,
+.auth-hero-shell,
+.topbar {
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.96), rgba(245, 249, 253, 0.94)),
+    linear-gradient(135deg, rgba(219, 232, 255, 0.55), transparent 46%);
+}
+
+.dashboard-hero-copy {
+  display: grid;
+  gap: 14px;
+}
+
+.hero-status-row,
+.hero-stats,
+.attendance-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.hero-stats .stat-box,
+.compact-stats .stat-box {
+  min-height: 88px;
+}
+
+.hero-stats .stat-box {
+  min-width: 140px;
 }
 
 .topbar-actions {
@@ -481,17 +540,38 @@ a {
   justify-items: end;
 }
 
+.elevated-panel {
+  min-width: 280px;
+  padding: 16px 18px;
+  border-radius: 18px;
+  border: 1px solid rgba(207, 216, 227, 0.85);
+  background: rgba(255, 255, 255, 0.9);
+  box-shadow: var(--shadow-soft);
+}
+
+.compact-copy {
+  max-width: 30ch;
+}
+
 .class-card {
   overflow: hidden;
   display: grid;
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: 16px;
+  box-shadow: var(--shadow-soft);
+  transition: transform 140ms ease, box-shadow 140ms ease, border-color 140ms ease;
+}
+
+.class-card:hover {
+  transform: translateY(-3px);
+  border-color: rgba(29, 96, 209, 0.35);
+  box-shadow: 0 24px 44px rgba(15, 23, 42, 0.14);
 }
 
 .class-thumb {
   height: 168px;
-  background: linear-gradient(135deg, #f3f7fc 0%, #e8eef8 100%);
+  background: linear-gradient(135deg, #eef4fb 0%, #dfe8f6 100%);
   border-bottom: 1px solid var(--border);
   overflow: hidden;
 }
@@ -521,7 +601,7 @@ a {
   background:
     linear-gradient(transparent 29px, rgba(31, 41, 51, 0.05) 30px),
     linear-gradient(90deg, transparent 29px, rgba(31, 41, 51, 0.05) 30px),
-    #ffffff;
+    linear-gradient(180deg, #ffffff, #f5f8fb);
   background-size: 30px 30px;
 }
 
@@ -712,9 +792,15 @@ a {
 .sidebar-card {
   display: grid;
   gap: 14px;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(246, 249, 252, 0.98));
 }
 
 .stat-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.compact-stats {
   grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
@@ -816,6 +902,11 @@ a {
   color: var(--success);
 }
 
+.presence-pill.warn {
+  background: #fff2df;
+  color: var(--warning);
+}
+
 .timer-face {
   padding: 16px;
 }
@@ -854,6 +945,40 @@ a {
   padding: 18px;
 }
 
+.teacher-access-card {
+  min-height: 100%;
+}
+
+.announcement-banner {
+  display: none;
+  margin-bottom: 18px;
+  padding: 14px 18px;
+  border-radius: 18px;
+  border: 1px solid rgba(29, 96, 209, 0.18);
+  background: linear-gradient(90deg, rgba(219, 232, 255, 0.82), rgba(255, 255, 255, 0.96));
+  box-shadow: var(--shadow-soft);
+}
+
+.announcement-banner.active {
+  display: block;
+}
+
+.announcement-copy {
+  display: grid;
+  gap: 6px;
+}
+
+.announcement-copy strong {
+  font-size: 1rem;
+}
+
+.auth-hero-shell .feature-box,
+.dashboard-hero .stat-box,
+.teacher-access-card .detail-block,
+.announcement-banner {
+  backdrop-filter: blur(6px);
+}
+
 @media (max-width: 1180px) {
   .auth-page,
   .login-grid,
@@ -866,6 +991,10 @@ a {
 
   .identity-panel {
     justify-items: start;
+  }
+
+  .elevated-panel {
+    min-width: 0;
   }
 }
 

@@ -1,0 +1,12 @@
+{
+  "name": "zoomaid",
+  "version": "0.1.0",
+  "description": "Realtime classroom board for Zoom sessions",
+  "private": true,
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "qrcode": "^1.5.4"
+  }
+}

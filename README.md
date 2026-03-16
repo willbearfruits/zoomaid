@@ -1,5 +1,13 @@
 # ZoomAid
 
+## Today's Live Class
+
+- Join the class board: `https://3918-2a00-a041-e2cd-dc00-ee96-6bed-1f4e-be92.ngrok-free.app/room/ca22ea`
+- Room code: `CA22EA`
+- When you join, enter your name for attendance and keep the board open beside Zoom.
+
+This room is set up for today's electronics + vibe coding session. Use it to follow live annotations, open shared links, and keep up with the current objective while class is running.
+
 ZoomAid is a lightweight realtime classroom board for Zoom lessons. It gives you:
 
 - A shareable live canvas for sketches and whiteboard notes

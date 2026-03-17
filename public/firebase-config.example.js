@@ -10,7 +10,7 @@ window.ZoomAidFirebaseConfig = {
 };
 
 window.ZoomAidAppConfig = {
-  appName: "ZoomAid Classroom",
+  appName: "ZoomAid",
   firebaseVersion: "12.7.0",
   defaultVisibility: "invite",
   screenRelayIntervalMs: 1600,

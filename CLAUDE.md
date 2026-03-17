@@ -4,7 +4,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What This Is
 
-ZoomAid is a free, open-source static realtime classroom hub for teachers and students. It runs on GitHub Pages with Firebase Realtime Database for shared state and Firebase Anonymous Auth for student access. There is no custom backend — the deployed app is purely client-side.
+ZoomAid is live teaching infrastructure — a platform where anyone with real skills can open a room and teach live. It is not an LMS, not a Zoom companion, not school software. The emphasis is on teacher autonomy, practical knowledge, and zero-friction entry for attendees.
+
+It runs on GitHub Pages with Firebase Realtime Database for shared state and Firebase Anonymous Auth for attendee access. No custom backend — the deployed app is purely client-side.
+
+**Tone**: all copy should be direct, capable, human. Avoid edtech language, school/admin tone, bland SaaS optimism, or "everything you need in one place" framing. Think independent teaching, not institutional education.
 
 ## Local Development
 
@@ -33,7 +37,7 @@ The entire app lives in one file: `public/app.js` (~4500 lines). It handles rout
 Key patterns in `app.js`:
 - **Global `state` object** holds auth, database refs, current route, classroom data, drawing state, subscriptions, and UI drafts
 - **Hash routing** — `parseRoute()` reads `location.hash` to determine view (`landing`, `dashboard`, or `classroom`)
-- **Landing page** renders without any Firebase interaction — the "Get Started" button navigates to `#/dashboard` which triggers anonymous auth
+- **Landing page** renders without any Firebase interaction — the "Start teaching" button navigates to `#/dashboard` which triggers anonymous auth
 - **Firebase subscriptions** are managed via `state.subs` with explicit `resetSubscription()` teardown to avoid listener leaks
 - **Teacher access** uses a two-tier model: registered teachers (email/password stored in Firebase) and guest-teacher mode. Access state is tracked in `state.teacherAccess` and persisted to both localStorage and Firebase (`teacherSessions/`)
 - **Classroom ownership** is checked via `ownerTeacherId` (matched against the active teacher session) with a legacy `ownerUid` fallback

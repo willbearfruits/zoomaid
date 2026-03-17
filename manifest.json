@@ -1,7 +1,7 @@
 {
-  "name": "ZoomAid — Free Classroom Hub",
+  "name": "ZoomAid — Live Teaching, Open Rooms",
   "short_name": "ZoomAid",
-  "description": "Realtime classroom hub with whiteboard, screen relay, shared links, timers, and attendance.",
+  "description": "Open a room and teach live. Whiteboard, screen sharing, links, timers, signals. Free and open source.",
   "start_url": "/",
   "display": "standalone",
   "background_color": "#f3f5f7",

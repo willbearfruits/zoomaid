@@ -35,9 +35,9 @@ jobs:
           cp -R public/. dist/public/
 
       - name: Inject Firebase config from secrets
-        if: ${{ secrets.FIREBASE_CONFIG_JS != '' }}
         env:
           FIREBASE_CONFIG_JS: ${{ secrets.FIREBASE_CONFIG_JS }}
+        if: env.FIREBASE_CONFIG_JS != ''
         run: echo "$FIREBASE_CONFIG_JS" > dist/public/firebase-config.js
 
       - name: Upload Pages artifact

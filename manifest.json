@@ -1,0 +1,16 @@
+{
+  "name": "ZoomAid — Free Classroom Hub",
+  "short_name": "ZoomAid",
+  "description": "Realtime classroom hub with whiteboard, screen relay, shared links, timers, and attendance.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#f3f5f7",
+  "theme_color": "#2563eb",
+  "icons": [
+    {
+      "src": "data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📚</text></svg>",
+      "sizes": "any",
+      "type": "image/svg+xml"
+    }
+  ]
+}

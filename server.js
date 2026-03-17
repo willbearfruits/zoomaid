@@ -36,11 +36,16 @@ const server = http.createServer((request, response) => {
   }
 
   if (pathname.startsWith("/public/")) {
-    const relativePath = pathname.slice(1);
-    return serveFile(path.join(ROOT, relativePath), response);
+    const filePath = path.resolve(ROOT, "public", pathname.slice("/public/".length));
+    if (!filePath.startsWith(path.join(ROOT, "public"))) {
+      response.writeHead(403, { "Content-Type": "text/plain; charset=utf-8" });
+      response.end("Forbidden");
+      return;
+    }
+    return serveFile(filePath, response);
   }
 
-  if (pathname === "/firebase-database.rules.json" || pathname === "/.nojekyll") {
+  if (pathname === "/manifest.json" || pathname === "/firebase-database.rules.json" || pathname === "/.nojekyll") {
     return serveFile(path.join(ROOT, pathname.slice(1)), response);
   }
 

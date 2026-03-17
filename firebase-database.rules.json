@@ -5,25 +5,51 @@
     "profiles": {
       "$uid": {
         ".read": "auth != null && auth.uid === $uid",
-        ".write": "auth != null && auth.uid === $uid"
+        ".write": "auth != null && auth.uid === $uid",
+        ".validate": "newData.hasChild('name')",
+        "name": {
+          ".validate": "newData.isString() && newData.val().length >= 1 && newData.val().length <= 80"
+        },
+        "preferredRole": {
+          ".validate": "newData.isString() && (newData.val() === 'student' || newData.val() === 'teacher')"
+        }
       }
     },
     "teacherAccounts": {
       "$teacherId": {
-        ".read": "auth != null",
-        ".write": "auth != null && newData.child('teacherId').val() === $teacherId && (newData.child('mode').val() === 'registered' || newData.child('mode').val() === 'guest')"
+        ".read": "auth != null && (root.child('teacherSessions').child(auth.uid).child('teacherId').val() === $teacherId)",
+        ".write": "auth != null && newData.child('teacherId').val() === $teacherId && (newData.child('mode').val() === 'registered' || newData.child('mode').val() === 'guest')",
+        ".validate": "newData.hasChildren(['teacherId', 'mode'])",
+        "teacherId": {
+          ".validate": "newData.isString() && newData.val().length >= 1 && newData.val().length <= 120"
+        },
+        "mode": {
+          ".validate": "newData.isString() && (newData.val() === 'registered' || newData.val() === 'guest')"
+        }
       }
     },
     "teacherSessions": {
       "$uid": {
         ".read": "auth != null && auth.uid === $uid",
-        ".write": "auth != null && auth.uid === $uid && (!newData.exists() || root.child('teacherAccounts').child(newData.child('teacherId').val()).exists())"
+        ".write": "auth != null && auth.uid === $uid && (!newData.exists() || root.child('teacherAccounts').child(newData.child('teacherId').val()).exists())",
+        "teacherId": {
+          ".validate": "newData.isString() && newData.val().length >= 1 && newData.val().length <= 120"
+        }
       }
     },
     "classroomSummaries": {
       "$classId": {
         ".read": "auth != null && (data.child('visibility').val() === 'public' || data.child('ownerUid').val() === auth.uid || (data.child('ownerTeacherId').exists() && data.child('ownerTeacherId').val() === root.child('teacherSessions').child(auth.uid).child('teacherId').val()) || root.child('classrooms').child($classId).child('members').child(auth.uid).exists())",
-        ".write": "auth != null && (((!data.exists()) && root.child('teacherSessions').child(auth.uid).child('teacherId').exists() && newData.child('ownerTeacherId').val() === root.child('teacherSessions').child(auth.uid).child('teacherId').val()) || (data.exists() && (((data.child('ownerTeacherId').exists() && data.child('ownerTeacherId').val() === root.child('teacherSessions').child(auth.uid).child('teacherId').val())) || (!data.child('ownerTeacherId').exists() && data.child('ownerUid').val() === auth.uid))))"
+        ".write": "auth != null && (((!data.exists()) && root.child('teacherSessions').child(auth.uid).child('teacherId').exists() && newData.child('ownerTeacherId').val() === root.child('teacherSessions').child(auth.uid).child('teacherId').val()) || (data.exists() && (((data.child('ownerTeacherId').exists() && data.child('ownerTeacherId').val() === root.child('teacherSessions').child(auth.uid).child('teacherId').val())) || (!data.child('ownerTeacherId').exists() && data.child('ownerUid').val() === auth.uid))))",
+        "title": {
+          ".validate": "newData.isString() && newData.val().length <= 200"
+        },
+        "visibility": {
+          ".validate": "newData.isString() && (newData.val() === 'public' || newData.val() === 'invite')"
+        },
+        "thumbnail": {
+          ".validate": "newData.isString() && newData.val().length <= 500000 && newData.val().beginsWith('data:image/')"
+        }
       }
     },
     "classrooms": {
@@ -31,7 +57,13 @@
         ".read": "auth != null && (data.child('meta/visibility').val() === 'public' || data.child('meta/ownerUid').val() === auth.uid || (data.child('meta/ownerTeacherId').exists() && data.child('meta/ownerTeacherId').val() === root.child('teacherSessions').child(auth.uid).child('teacherId').val()) || data.child('members').child(auth.uid).exists())",
         ".write": "auth != null && (((!data.exists()) && root.child('teacherSessions').child(auth.uid).child('teacherId').exists() && newData.child('meta/ownerTeacherId').val() === root.child('teacherSessions').child(auth.uid).child('teacherId').val()) || (data.exists() && (((data.child('meta/ownerTeacherId').exists() && data.child('meta/ownerTeacherId').val() === root.child('teacherSessions').child(auth.uid).child('teacherId').val())) || (!data.child('meta/ownerTeacherId').exists() && data.child('meta/ownerUid').val() === auth.uid))))",
         "meta": {
-          ".write": "auth != null && (((data.parent().child('meta/ownerTeacherId').exists() && data.parent().child('meta/ownerTeacherId').val() === root.child('teacherSessions').child(auth.uid).child('teacherId').val())) || (!data.parent().child('meta/ownerTeacherId').exists() && data.parent().child('meta/ownerUid').val() === auth.uid))"
+          ".write": "auth != null && (((data.parent().child('meta/ownerTeacherId').exists() && data.parent().child('meta/ownerTeacherId').val() === root.child('teacherSessions').child(auth.uid).child('teacherId').val())) || (!data.parent().child('meta/ownerTeacherId').exists() && data.parent().child('meta/ownerUid').val() === auth.uid))",
+          "title": {
+            ".validate": "newData.isString() && newData.val().length <= 200"
+          },
+          "visibility": {
+            ".validate": "newData.isString() && (newData.val() === 'public' || newData.val() === 'invite')"
+          }
         },
         "board": {
           ".write": "auth != null && (((data.parent().child('meta/ownerTeacherId').exists() && data.parent().child('meta/ownerTeacherId').val() === root.child('teacherSessions').child(auth.uid).child('teacherId').val())) || (!data.parent().child('meta/ownerTeacherId').exists() && data.parent().child('meta/ownerUid').val() === auth.uid))"
@@ -43,7 +75,10 @@
           ".write": "auth != null && (((data.parent().child('meta/ownerTeacherId').exists() && data.parent().child('meta/ownerTeacherId').val() === root.child('teacherSessions').child(auth.uid).child('teacherId').val())) || (!data.parent().child('meta/ownerTeacherId').exists() && data.parent().child('meta/ownerUid').val() === auth.uid))"
         },
         "screen": {
-          ".write": "auth != null && (((data.parent().child('meta/ownerTeacherId').exists() && data.parent().child('meta/ownerTeacherId').val() === root.child('teacherSessions').child(auth.uid).child('teacherId').val())) || (!data.parent().child('meta/ownerTeacherId').exists() && data.parent().child('meta/ownerUid').val() === auth.uid))"
+          ".write": "auth != null && (((data.parent().child('meta/ownerTeacherId').exists() && data.parent().child('meta/ownerTeacherId').val() === root.child('teacherSessions').child(auth.uid).child('teacherId').val())) || (!data.parent().child('meta/ownerTeacherId').exists() && data.parent().child('meta/ownerUid').val() === auth.uid))",
+          "image": {
+            ".validate": "!newData.exists() || (newData.isString() && newData.val().length <= 500000)"
+          }
         },
         "announcement": {
           ".write": "auth != null && (((data.parent().child('meta/ownerTeacherId').exists() && data.parent().child('meta/ownerTeacherId').val() === root.child('teacherSessions').child(auth.uid).child('teacherId').val())) || (!data.parent().child('meta/ownerTeacherId').exists() && data.parent().child('meta/ownerUid').val() === auth.uid))"

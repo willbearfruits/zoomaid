@@ -1,8 +1,13 @@
 {
   "name": "zoomaid",
-  "version": "0.1.0",
-  "description": "Static realtime classroom app with Firebase-backed state",
-  "private": true,
+  "version": "1.0.0",
+  "description": "Free, open-source realtime classroom hub with live whiteboard, screen relay, and shared resources",
+  "license": "MIT",
+  "homepage": "https://willbearfruits.github.io/zoomaid/",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/willbearfruits/zoomaid.git"
+  },
   "scripts": {
     "start": "node server.js"
   },

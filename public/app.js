@@ -42,7 +42,10 @@ const state = {
     currentStroke: null,
     pendingFlush: 0,
     lastPoint: null,
+    undoStack: [],
+    maxUndo: 50,
   },
+  lastHandCount: 0,
   screen: {
     stream: null,
     video: null,
@@ -64,7 +67,31 @@ const state = {
   publicJoinCache: new Set(),
   firebaseLoadPromise: null,
   qrLoadPromise: null,
+  busyActions: new Set(),
 };
+
+function guardAction(key, fn) {
+  return async (...args) => {
+    if (state.busyActions.has(key)) {
+      return;
+    }
+    state.busyActions.add(key);
+    try {
+      await fn(...args);
+    } finally {
+      state.busyActions.delete(key);
+    }
+  };
+}
+
+function confirmAction(message, fn) {
+  return async (...args) => {
+    if (!window.confirm(message)) {
+      return;
+    }
+    await fn(...args);
+  };
+}
 
 boot();
 
@@ -289,6 +316,13 @@ async function bootstrapTeacherAccess() {
 
 async function renderCurrentRoute() {
   const token = ++state.routeToken;
+
+  if (state.route.kind === "landing") {
+    teardownDashboardSubscription();
+    teardownClassroomSession();
+    renderLandingPage();
+    return;
+  }
 
   if (!hasFirebaseConfig()) {
     renderSetupScreen();
@@ -577,7 +611,7 @@ function renderAuthConfigScreen() {
         <div class="stack">
           <div class="detail-block">
             <strong>Open this page</strong>
-            <div class="mono">https://console.firebase.google.com/project/zoomaid-classroom-20260316/authentication/providers</div>
+            <div class="mono">https://console.firebase.google.com/project/${escapeHtml(window.ZoomAidFirebaseConfig?.projectId || "YOUR_PROJECT")}/authentication/providers</div>
           </div>
           <div class="detail-block">
             <strong>What to do</strong>
@@ -782,6 +816,125 @@ function bindTeacherAccessControls(renderTarget) {
   });
 }
 
+function renderLandingPage() {
+  state.viewKey = "landing";
+
+  renderPage(`
+    <main class="landing-page">
+      <nav class="landing-nav">
+        <div class="landing-nav-inner">
+          <span class="landing-brand">ZoomAid</span>
+          <div class="button-row">
+            <a href="https://github.com/willbearfruits/zoomaid" class="button ghost" target="_blank" rel="noopener">GitHub</a>
+            <button class="button" type="button" id="landingEnterBtn">Open app</button>
+          </div>
+        </div>
+      </nav>
+
+      <section class="landing-hero">
+        <div class="landing-hero-inner">
+          <span class="pill live">Free &amp; open source</span>
+          <h1>The classroom hub that just&nbsp;works.</h1>
+          <p class="landing-copy">
+            ZoomAid gives teachers a single console with a live whiteboard, screen relay,
+            shared links, timers, announcements, and attendance &mdash; while students walk
+            straight into the room with nothing more than a name.
+          </p>
+          <div class="button-row" style="margin-top: 10px;">
+            <button class="button landing-cta" type="button" id="landingGetStarted">Get started &mdash; it&rsquo;s&nbsp;free</button>
+            <a href="#features" class="button secondary" id="landingLearnMore">See features</a>
+          </div>
+        </div>
+      </section>
+
+      <section class="landing-section" id="features">
+        <p class="eyebrow" style="text-align:center;">Built for the classroom</p>
+        <h2 class="landing-section-title">Everything teachers and students need in one place</h2>
+        <div class="landing-features">
+          <article class="landing-feature-card">
+            <div class="landing-feature-icon">&#9998;</div>
+            <h3>Live whiteboard</h3>
+            <p>Draw, annotate, and switch between grid and blank backgrounds. Students see updates in realtime.</p>
+          </article>
+          <article class="landing-feature-card">
+            <div class="landing-feature-icon">&#128250;</div>
+            <h3>Screen relay</h3>
+            <p>Share your IDE, schematics, or documents as a background layer with ink annotations on top.</p>
+          </article>
+          <article class="landing-feature-card">
+            <div class="landing-feature-icon">&#128279;</div>
+            <h3>Shared resources</h3>
+            <p>Pin repos, datasheets, tasks, and docs in a panel everyone can see during the session.</p>
+          </article>
+          <article class="landing-feature-card">
+            <div class="landing-feature-icon">&#9201;</div>
+            <h3>Focus timer</h3>
+            <p>Set sprint or lab block timers visible to the entire classroom for synchronized work sessions.</p>
+          </article>
+          <article class="landing-feature-card">
+            <div class="landing-feature-icon">&#128227;</div>
+            <h3>Announcements &amp; signals</h3>
+            <p>Broadcast messages and let students raise hands without getting lost in video call chat.</p>
+          </article>
+          <article class="landing-feature-card">
+            <div class="landing-feature-icon">&#128203;</div>
+            <h3>Session summary</h3>
+            <p>Export a Markdown wrap-up with attendance, resources, timeline, and session notes.</p>
+          </article>
+        </div>
+      </section>
+
+      <section class="landing-section">
+        <p class="eyebrow" style="text-align:center;">How it works</p>
+        <h2 class="landing-section-title">Up and running in under a minute</h2>
+        <div class="landing-steps">
+          <div class="landing-step">
+            <div class="landing-step-number">1</div>
+            <h3>Enter your name</h3>
+            <p>No accounts needed for students. Teachers unlock the console with a quick registration or guest mode.</p>
+          </div>
+          <div class="landing-step">
+            <div class="landing-step-number">2</div>
+            <h3>Create or join a room</h3>
+            <p>Teachers create classrooms. Students join via a link, short code, or QR &mdash; public or invite-only.</p>
+          </div>
+          <div class="landing-step">
+            <div class="landing-step-number">3</div>
+            <h3>Teach and learn together</h3>
+            <p>Use the board, timer, links, and announcements while everyone stays on the same page in realtime.</p>
+          </div>
+        </div>
+      </section>
+
+      <section class="landing-section landing-cta-section">
+        <h2 class="landing-section-title">Ready to try it?</h2>
+        <p class="landing-copy" style="text-align:center; margin: 0 auto;">
+          ZoomAid is free, open-source, and runs entirely in the browser.
+          No installs, no sign-ups for students, no tracking.
+        </p>
+        <div class="button-row" style="justify-content: center; margin-top: 14px;">
+          <button class="button landing-cta" type="button" id="landingBottomCta">Open ZoomAid</button>
+        </div>
+      </section>
+
+      <footer class="landing-footer">
+        <p>ZoomAid is open-source under the MIT License.
+          <a href="https://github.com/willbearfruits/zoomaid" target="_blank" rel="noopener">View on GitHub</a>
+        </p>
+      </footer>
+    </main>
+  `);
+
+  const goApp = () => { window.location.hash = "#/dashboard"; };
+  document.querySelector("#landingEnterBtn")?.addEventListener("click", goApp);
+  document.querySelector("#landingGetStarted")?.addEventListener("click", goApp);
+  document.querySelector("#landingBottomCta")?.addEventListener("click", goApp);
+  document.querySelector("#landingLearnMore")?.addEventListener("click", (e) => {
+    e.preventDefault();
+    document.querySelector("#features")?.scrollIntoView({ behavior: "smooth" });
+  });
+}
+
 function renderLoginScreen() {
   if (state.viewKey !== "login") {
     state.viewKey = "login";
@@ -803,30 +956,17 @@ function renderLoginScreen() {
             <span class="pill">${escapeHtml(getTeacherAccessModeLabel())}</span>
             <span class="pill">${escapeHtml(state.user?.isAnonymous ? "Anonymous student auth" : "Connected")}</span>
           </div>
-          <p class="eyebrow">Classroom hub</p>
-          <h1>Teach from one clean console. Let students walk straight into the room.</h1>
+          <p class="eyebrow">Free classroom hub</p>
+          <h1>One shared board. Zero installs.</h1>
           <p class="muted">
-            ZoomAid now separates student entry from teacher control. Students join with a name, while teachers
-            unlock the console with registered access or a fast guest mode for today.
+            Students join with a name. Teachers unlock the console to manage boards, links, timers, and attendance in real time.
           </p>
-          <div class="feature-grid">
-            <article class="feature-box">
-              <h3>Live board + screen ink</h3>
-              <p>Annotate over the board or a shared screen frame without sending students around multiple tools.</p>
-            </article>
-            <article class="feature-box">
-              <h3>Teacher gate</h3>
-              <p>The console is no longer tied to a casual role toggle. Teacher access is explicit.</p>
-            </article>
-            <article class="feature-box">
-              <h3>Classroom signals</h3>
-              <p>Announcements and raised hands stay visible inside the room instead of getting lost in chat.</p>
-            </article>
-            <article class="feature-box">
-              <h3>Session wrap-up</h3>
-              <p>Keep the resources, attendance, and timeline aligned for a clean end-of-class summary.</p>
-            </article>
-          </div>
+          <ul class="feature-list">
+            <li>Live whiteboard &amp; screen relay</li>
+            <li>Shared links, timers &amp; announcements</li>
+            <li>Hand raise signals &amp; attendance tracking</li>
+            <li>No student accounts required</li>
+          </ul>
         </section>
 
         <div class="auth-side-stack">
@@ -919,166 +1059,90 @@ function renderDashboard() {
 
   renderPage(`
     <main class="page-shell">
-      <header class="card dashboard-header dashboard-hero">
-        <div class="dashboard-hero-copy">
-          <p class="eyebrow">Classroom hub</p>
-          <h1>Choose a room and run the whole class from one page.</h1>
-          <p class="brand-meta">
-            Boards, links, attendance, announcements, raised hands, timers, and screen annotation stay in one realtime classroom shell.
-          </p>
-          <div class="hero-stats">
-            <div class="stat-box">
-              <strong>Live rooms</strong>
-              <div>${escapeHtml(String(liveCount))}</div>
-            </div>
-            <div class="stat-box">
-              <strong>Your rooms</strong>
-              <div>${escapeHtml(String(myClassrooms.length))}</div>
-            </div>
-            <div class="stat-box">
-              <strong>Teacher access</strong>
-              <div>${escapeHtml(teacherActive ? "Ready" : "Locked")}</div>
-            </div>
+      <header class="dashboard-header">
+        <div class="dashboard-hero-row">
+          <div>
+            <h1>Classrooms</h1>
+            <p class="small">${escapeHtml(String(liveCount))} live &middot; ${escapeHtml(String(myClassrooms.length))} yours &middot; ${escapeHtml(teacherActive ? "Teacher ready" : "Student mode")}</p>
+          </div>
+          <div class="dashboard-actions">
+            <span class="pill">${escapeHtml(state.profile.name)}</span>
+            <button class="button ghost small" type="button" id="resetSessionButton">Reset session</button>
           </div>
         </div>
-        <div class="identity-panel elevated-panel">
-          <div class="identity-meta">
-            <span class="pill">${escapeHtml(state.profile.name)}</span>
-            <span class="pill ${teacherActive ? "live" : ""}">${escapeHtml(getTeacherAccessModeLabel())}</span>
-          </div>
-          <p class="muted compact-copy">${escapeHtml(teacherModeDescription())}</p>
-          <div class="button-row">
-            <button class="button secondary" type="button" id="resetSessionButton">Reset local session</button>
-          </div>
+
+        <div class="dashboard-quick-actions">
+          <form id="joinForm" class="inline-form">
+            <input
+              id="joinInput"
+              class="input"
+              value="${escapeHtml(state.dashboardDrafts.joinInput)}"
+              placeholder="Paste invite link or code (ABC123:8K4P1Q)"
+            />
+            <button class="button" type="submit">Join</button>
+          </form>
+          ${
+            teacherActive
+              ? `<button class="button" type="button" id="showCreateFormButton">+ New classroom</button>`
+              : ""
+          }
         </div>
       </header>
 
-      <section class="dashboard-layout">
-        <aside class="dashboard-sidebar">
-          <section class="card sidebar-card">
-            <h2>Join a classroom</h2>
-            <p class="muted">
-              Paste an invite URL, a classroom hash link, or a short token like
-              <span class="mono">ABC123:8K4P1Q</span>.
-            </p>
-            <form id="joinForm" class="stack">
-              <div class="field">
-                <label for="joinInput">Invite link or classroom code</label>
-                <input
-                  id="joinInput"
-                  class="input"
-                  value="${escapeHtml(state.dashboardDrafts.joinInput)}"
-                  placeholder="https://... or ABC123:8K4P1Q"
-                />
-              </div>
-              <div class="button-row">
-                <button class="button" type="submit">Open classroom</button>
-              </div>
-            </form>
-          </section>
+      ${
+        teacherActive
+          ? `
+            <section class="card create-form-card" id="createFormCard" style="display:none">
+              <form id="createClassForm" class="create-form-grid">
+                <div class="field">
+                  <label for="createTitleInput">Title</label>
+                  <input id="createTitleInput" class="input" maxlength="120" value="${escapeHtml(state.dashboardDrafts.title)}" placeholder="Electronics + vibe coding" />
+                </div>
+                <div class="field">
+                  <label for="createSubjectInput">Topic</label>
+                  <input id="createSubjectInput" class="input" maxlength="120" value="${escapeHtml(state.dashboardDrafts.subject)}" placeholder="ESP32 bring-up" />
+                </div>
+                <div class="field">
+                  <label for="createDescriptionInput">Note</label>
+                  <textarea id="createDescriptionInput" class="textarea" rows="2" maxlength="400" placeholder="What this room is for">${escapeHtml(state.dashboardDrafts.description)}</textarea>
+                </div>
+                <div class="field">
+                  <label for="createVisibilitySelect">Visibility</label>
+                  <select id="createVisibilitySelect" class="select">
+                    <option value="invite" ${state.dashboardDrafts.visibility !== "public" ? "selected" : ""}>Invite only</option>
+                    <option value="public" ${state.dashboardDrafts.visibility === "public" ? "selected" : ""}>Public</option>
+                  </select>
+                </div>
+                <button class="button" type="submit">Create</button>
+              </form>
+            </section>
+          `
+          : renderTeacherAccessPanel("dashboard")
+      }
 
+      <section class="class-section">
+        <h2>Your classrooms</h2>
+        <div class="class-grid">
           ${
-            teacherActive
-              ? `
-                <section class="card sidebar-card">
-                  <h2>Create a classroom</h2>
-                  <p class="muted">
-                    Rooms are live by default. Invite-only keeps the room out of the public gallery until someone joins by invite.
-                  </p>
-                  <form id="createClassForm" class="stack">
-                    <div class="field">
-                      <label for="createTitleInput">Classroom title</label>
-                      <input
-                        id="createTitleInput"
-                        class="input"
-                        maxlength="120"
-                        value="${escapeHtml(state.dashboardDrafts.title)}"
-                        placeholder="Electronics + vibe coding"
-                      />
-                    </div>
-                    <div class="field">
-                      <label for="createSubjectInput">Current topic</label>
-                      <input
-                        id="createSubjectInput"
-                        class="input"
-                        maxlength="120"
-                        value="${escapeHtml(state.dashboardDrafts.subject)}"
-                        placeholder="ESP32 bring-up / live code review"
-                      />
-                    </div>
-                    <div class="field">
-                      <label for="createDescriptionInput">Class note</label>
-                      <textarea
-                        id="createDescriptionInput"
-                        class="textarea"
-                        maxlength="400"
-                        placeholder="What this room is for"
-                      >${escapeHtml(state.dashboardDrafts.description)}</textarea>
-                    </div>
-                    <div class="field">
-                      <label for="createVisibilitySelect">Visibility</label>
-                      <select id="createVisibilitySelect" class="select">
-                        <option value="invite" ${
-                          state.dashboardDrafts.visibility !== "public" ? "selected" : ""
-                        }>Invite only</option>
-                        <option value="public" ${
-                          state.dashboardDrafts.visibility === "public" ? "selected" : ""
-                        }>Public in gallery</option>
-                      </select>
-                    </div>
-                    <div class="button-row">
-                      <button class="button" type="submit">Create classroom</button>
-                    </div>
-                  </form>
-                </section>
-              `
-              : renderTeacherAccessPanel("dashboard")
+            myClassrooms.length
+              ? myClassrooms.map((summary) => renderClassroomCard(summary, true)).join("")
+              : `<div class="empty-state">No classrooms yet. Create one or join with an invite link.</div>`
           }
-
-          <section class="card sidebar-card">
-            <h2>How students use it</h2>
-            <ul class="helper-list">
-              <li>Open the classroom beside Meet or Zoom and keep it pinned during class.</li>
-              <li>Follow the board, timer, resources, and screen notes without switching tabs repeatedly.</li>
-              <li>Use raised hand when you need help instead of interrupting the main flow.</li>
-            </ul>
-          </section>
-        </aside>
-
-        <section class="dashboard-main">
-          <section class="card list-card">
-            <div class="section-head">
-              <div>
-                <h2>Your classrooms</h2>
-                <div class="small">Owned rooms and classrooms you already joined.</div>
-              </div>
-            </div>
-            <div class="class-grid">
-              ${
-                myClassrooms.length
-                  ? myClassrooms.map((summary) => renderClassroomCard(summary, true)).join("")
-                  : `<div class="empty-state">No classrooms yet. Create one as a teacher, or open an invite link to add one here.</div>`
-              }
-            </div>
-          </section>
-
-          <section class="card list-card">
-            <div class="section-head">
-              <div>
-                <h2>Live public classrooms</h2>
-                <div class="small">Public rooms are open from the gallery without an invite token.</div>
-              </div>
-            </div>
-            <div class="class-grid">
-              ${
-                publicClassrooms.length
-                  ? publicClassrooms.map((summary) => renderClassroomCard(summary, false)).join("")
-                  : `<div class="empty-state">No live public classrooms are visible right now.</div>`
-              }
-            </div>
-          </section>
-        </section>
+        </div>
       </section>
+
+      ${
+        publicClassrooms.length
+          ? `
+            <section class="class-section">
+              <h2>Public classrooms</h2>
+              <div class="class-grid">
+                ${publicClassrooms.map((summary) => renderClassroomCard(summary, false)).join("")}
+              </div>
+            </section>
+          `
+          : ""
+      }
     </main>
   `);
 
@@ -1117,14 +1181,21 @@ function renderDashboard() {
     window.location.hash = targetHash;
   });
 
+  document.querySelector("#showCreateFormButton")?.addEventListener("click", () => {
+    const card = document.querySelector("#createFormCard");
+    if (card) {
+      card.style.display = card.style.display === "none" ? "" : "none";
+    }
+  });
+
   document
     .querySelector("#createClassForm")
     ?.addEventListener("submit", async (event) => {
       event.preventDefault();
-      await createClassroom();
+      await guardAction("createClass", createClassroom)();
     });
 
-  document.querySelector("#resetSessionButton")?.addEventListener("click", resetLocalSession);
+  document.querySelector("#resetSessionButton")?.addEventListener("click", confirmAction("Reset your local session? You will need to re-enter your name.", resetLocalSession));
   bindTeacherAccessControls(document);
 
   document.querySelectorAll("[data-open-classroom]").forEach((button) => {
@@ -1137,56 +1208,28 @@ function renderDashboard() {
 }
 
 function renderClassroomCard(summary, isMine) {
-  const label = summary.status === "ended" ? "View room" : isMine ? "Open room" : "Join room";
-  const visibilityTag = summary.visibility === "public" ? "Public" : "Invite only";
-  const storedRole = state.profile.classrooms?.[summary.id]?.role;
+  const label = summary.status === "ended" ? "View" : isMine ? "Open" : "Join";
   const teacherOwnerMatch = summary.ownerTeacherId
     ? summary.ownerTeacherId === state.teacherAccess.teacherId && isTeacherAccessActive()
     : summary.ownerUid === state.user?.uid;
-  const role = teacherOwnerMatch ? "teacher" : storedRole || "student";
-  const ownershipTag = teacherOwnerMatch ? "Teacher" : storedRole === "teacher" ? "Owned" : isMine ? "Joined" : "";
+  const statusClass = summary.status === "ended" ? "" : "live";
 
   return `
-    <article class="class-card">
+    <article class="class-card" data-open-classroom="${escapeHtml(summary.id)}" data-open-invite="${summary.visibility === "invite" && state.profile.classrooms?.[summary.id]?.inviteCodeUsed ? escapeHtml(state.profile.classrooms[summary.id].inviteCodeUsed) : ""}">
       <div class="class-thumb">
         ${
           summary.thumbnail
-            ? `<img src="${summary.thumbnail}" alt="${escapeHtml(summary.title)} thumbnail" />`
-            : `
-              <div class="thumb-placeholder">
-                <div class="chip-row">
-                  <span class="tag">${escapeHtml(visibilityTag)}</span>
-                  <span class="tag">${summary.status === "ended" ? "Ended" : "Live"}</span>
-                </div>
-                <strong>${escapeHtml(summary.currentTopic || summary.title)}</strong>
-              </div>
-            `
+            ? `<img src="${escapeAttribute(sanitizeDataUrl(summary.thumbnail))}" alt="${escapeAttribute(summary.title)} thumbnail" />`
+            : `<div class="thumb-placeholder"><strong>${escapeHtml(summary.currentTopic || summary.title)}</strong></div>`
         }
       </div>
       <div class="class-card-body">
-        <div class="chip-row">
-          <span class="tag">${summary.status === "ended" ? "Ended" : "Live"}</span>
-          <span class="tag">${escapeHtml(visibilityTag)}</span>
-          <span class="tag">${escapeHtml(formatSessionPhase(summary.phase))}</span>
-          ${ownershipTag ? `<span class="tag">${escapeHtml(ownershipTag)}</span>` : ""}
-        </div>
-        <div>
-          <h3>${escapeHtml(summary.title)}</h3>
-          <div class="small">${escapeHtml(summary.currentTopic || summary.description || "No topic set yet.")}</div>
-        </div>
-        <div class="meta-line">
-          <span>${escapeHtml(summary.ownerName || "Teacher")}</span>
-          <span>Updated ${escapeHtml(formatRelativeTime(summary.updatedAt || summary.createdAt))}</span>
-        </div>
-        <div class="button-row">
-          <button
-            class="button secondary"
-            type="button"
-            data-open-classroom="${escapeHtml(summary.id)}"
-            data-open-invite="${summary.visibility === "invite" && state.profile.classrooms?.[summary.id]?.inviteCodeUsed ? escapeHtml(state.profile.classrooms[summary.id].inviteCodeUsed) : ""}"
-          >
-            ${escapeHtml(label)}
-          </button>
+        <h3>${escapeHtml(summary.title)}</h3>
+        <p class="small">${escapeHtml(summary.currentTopic || summary.description || "No topic set")}</p>
+        <div class="card-footer">
+          <span class="pill compact ${statusClass}">${summary.status === "ended" ? "Ended" : "Live"}</span>
+          ${teacherOwnerMatch ? `<span class="pill compact">Owner</span>` : ""}
+          <span class="small">${escapeHtml(formatRelativeTime(summary.updatedAt || summary.createdAt))}</span>
         </div>
       </div>
     </article>
@@ -1211,323 +1254,329 @@ function renderClassroomShell(role) {
   const teacherMode = role === "teacher";
   const room = state.classroom;
 
+  const sidebarTabs = teacherMode
+    ? [
+        { id: "board", label: "Board" },
+        { id: "people", label: "People" },
+        { id: "resources", label: "Links" },
+        { id: "tools", label: "Tools" },
+        { id: "share", label: "Share" },
+      ]
+    : [
+        { id: "board", label: "Board" },
+        { id: "people", label: "People" },
+        { id: "resources", label: "Links" },
+        { id: "tools", label: "Tools" },
+      ];
+
   renderPage(`
-    <main class="page-shell">
-      <header class="topbar">
-        <div class="brand-block">
-          <div class="breadcrumb-row">
-            <button class="button secondary" type="button" id="backToHubButton">Back to classes</button>
-            <span class="pill ${teacherMode ? "live" : ""}">${teacherMode ? "Teacher console" : "Student view"}</span>
-            <span class="pill">${room.meta.visibility === "public" ? "Public" : "Invite only"}</span>
-            <span class="pill">${escapeHtml(formatSessionPhase(room.meta.phase))}</span>
-            <span class="pill ${room.meta.status === "ended" ? "" : "live"}">${room.meta.status === "ended" ? "Ended" : "Live"}</span>
+    <main class="page-shell classroom-shell">
+      <header class="topbar compact-topbar">
+        <div class="topbar-left">
+          <button class="button ghost" type="button" id="backToHubButton" title="Back to classes" aria-label="Back to classes">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>
+          </button>
+          <div class="topbar-title-group">
+            <h1 class="topbar-title" id="headerTitle">${escapeHtml(room.board.lessonTitle)}</h1>
+            <span class="topbar-meta" id="headerMeta"></span>
           </div>
-          <p class="eyebrow">Classroom</p>
-          <h1 id="headerTitle">${escapeHtml(room.board.lessonTitle)}</h1>
-          <p class="brand-meta" id="headerMeta"></p>
         </div>
-        <div class="status-line">
+        <div class="topbar-right">
+          <span class="pill compact ${room.meta.status === "ended" ? "" : "live"}">${room.meta.status === "ended" ? "Ended" : "Live"}</span>
+          <span class="pill compact">${escapeHtml(formatSessionPhase(room.meta.phase))}</span>
+          <span class="pill compact ${teacherMode ? "live" : ""}">${teacherMode ? "Teacher" : "Student"}</span>
           <span class="status-dot" id="statusDot"></span>
-          <span id="statusText">Connecting</span>
+          <span class="small" id="statusText">Connecting</span>
         </div>
       </header>
 
       <section class="card announcement-banner" id="announcementBanner"></section>
 
       <section class="classroom-layout">
-        <section class="card canvas-card">
-          <div class="panel-header">
-            <div>
-              <h2>Live board</h2>
-              <p id="canvasHint"></p>
-            </div>
-            ${
-              teacherMode
-                ? `
-                  <div class="toolbar" id="teacherToolbar">
-                    <div class="toolbar-group" id="colorGroup"></div>
-                    <div class="toolbar-group">
-                      <button class="button" type="button" data-tool="draw">Pen</button>
-                      <button class="button secondary" type="button" data-tool="erase">Eraser</button>
-                    </div>
-                    <div class="toolbar-group">
-                      <label class="small" for="brushSize">Brush</label>
-                      <input id="brushSize" type="range" min="1" max="16" value="${escapeHtml(
-                        String(state.drawing.size),
-                      )}" />
-                    </div>
-                    <div class="toolbar-group">
-                      <button class="button secondary" type="button" data-background="grid">Grid</button>
-                      <button class="button secondary" type="button" data-background="blank">Blank</button>
-                    </div>
-                    <div class="toolbar-group">
-                      <button class="button danger" type="button" id="clearCanvasButton">Clear board</button>
-                    </div>
-                  </div>
-                `
-                : ""
-            }
-          </div>
+        <div class="canvas-wrap">
           <div class="canvas-frame" id="canvasFrame">
             <div class="board-media" id="boardMedia">
               <img id="boardImage" class="board-image" alt="Shared screen background" />
             </div>
             <canvas id="boardCanvas" class="board-canvas" width="1600" height="900"></canvas>
           </div>
-        </section>
-
-        <aside class="sidebar">
           ${
             teacherMode
               ? `
-                <section class="card sidebar-card">
-                  <h2>Room access</h2>
-                  <div class="stat-grid">
-                    <div class="stat-box">
-                      <strong>Class code</strong>
-                      <div id="roomCodeValue" class="mono"></div>
-                    </div>
-                    <div class="stat-box">
-                      <strong>Invite token</strong>
-                      <div id="inviteCodeValue" class="mono"></div>
-                    </div>
+                <div class="toolbar-float" id="teacherToolbar">
+                  <div class="toolbar-group" id="colorGroup"></div>
+                  <div class="toolbar-sep"></div>
+                  <div class="toolbar-group">
+                    <button class="button" type="button" data-tool="draw" title="Pen">Pen</button>
+                    <button class="button secondary" type="button" data-tool="erase" title="Eraser">Eraser</button>
                   </div>
-                  <div class="field">
-                    <label for="visibilitySelect">Visibility</label>
-                    <select id="visibilitySelect" class="select">
-                      <option value="invite">Invite only</option>
-                      <option value="public">Public in gallery</option>
-                    </select>
+                  <div class="toolbar-sep"></div>
+                  <div class="toolbar-group">
+                    <input id="brushSize" type="range" min="1" max="16" value="${escapeHtml(
+                      String(state.drawing.size),
+                    )}" title="Brush size" />
                   </div>
-                  <div class="qr-card">
-                    <img id="viewerQr" class="qr-image" alt="Classroom QR code" />
-                    <div id="qrFallback" class="small"></div>
+                  <div class="toolbar-sep"></div>
+                  <div class="toolbar-group">
+                    <button class="button secondary" type="button" data-background="grid" title="Grid background">Grid</button>
+                    <button class="button secondary" type="button" data-background="blank" title="Blank background">Blank</button>
                   </div>
-                  <div class="share-field">
-                    <label for="studentLink" class="small">Student join link</label>
-                    <div class="share-input">
-                      <input id="studentLink" class="input readonly" readonly />
-                      <button class="button secondary" type="button" data-copy-target="studentLink">Copy</button>
-                    </div>
+                  <div class="toolbar-sep"></div>
+                  <div class="toolbar-group">
+                    <button class="button secondary" type="button" id="undoButton" title="Undo (Ctrl+Z)">Undo</button>
+                    <button class="button danger" type="button" id="clearCanvasButton" title="Clear board">Clear</button>
                   </div>
-                  <div class="share-field">
-                    <label for="joinCodeField" class="small">Short join token</label>
-                    <div class="share-input">
-                      <input id="joinCodeField" class="input readonly mono" readonly />
-                      <button class="button secondary" type="button" data-copy-target="joinCodeField">Copy</button>
-                    </div>
-                  </div>
-                  <p class="small">Teacher control follows the active teacher access that owns this classroom.</p>
-                </section>
+                </div>
               `
-              : `
-                <section class="card sidebar-card">
-                  <h2>Classroom status</h2>
-                  <div id="studentPresenceCard" class="detail-block"></div>
-                </section>
-              `
+              : `<p class="canvas-hint" id="canvasHint"></p>`
           }
+        </div>
 
-          <section class="card sidebar-card">
-            <h2>Class pulse</h2>
-            ${
-              teacherMode
-                ? `
-                  <form id="announcementForm" class="stack">
-                    <div class="field">
-                      <label for="phaseSelect">Session phase</label>
-                      <select id="phaseSelect" class="select">
-                        <option value="lecture">Lecture</option>
-                        <option value="lab">Lab</option>
-                        <option value="qa">Q&amp;A</option>
-                        <option value="break">Break</option>
-                      </select>
-                    </div>
-                    <div class="field">
-                      <label for="announcementInput">Live announcement</label>
-                      <textarea id="announcementInput" class="textarea" placeholder="Post a note like 'Switch to schematic view' or 'Break for 5 min'."></textarea>
-                    </div>
-                    <div class="button-row">
-                      <button class="button" type="submit">Post update</button>
-                      <button class="button secondary" type="button" id="clearAnnouncementButton">Clear</button>
-                    </div>
-                  </form>
-                `
-                : `
-                  <div class="detail-block">
-                    <strong>Session phase</strong>
-                    <div id="studentPhaseLabel">Lecture</div>
-                    <div class="small" id="studentAnnouncementCopy">No live announcement right now.</div>
-                  </div>
-                  <div class="button-row">
-                    <button class="button" type="button" id="toggleHandRaiseButton">Raise hand</button>
-                  </div>
-                  <div class="small" id="handRaiseStatus">Your hand is currently down.</div>
-                `
-            }
-          </section>
+        <aside class="sidebar">
+          <nav class="sidebar-tabs">
+            ${sidebarTabs
+              .map(
+                (tab, i) =>
+                  `<button class="sidebar-tab${i === 0 ? " active" : ""}" type="button" data-tab="${tab.id}">${tab.label}</button>`,
+              )
+              .join("")}
+          </nav>
 
-          <section class="card sidebar-card">
-            <h2>Attendance</h2>
-            ${
-              teacherMode
-                ? `
-                  <div class="stat-grid">
-                    <div class="stat-box">
-                      <strong>Signed in</strong>
-                      <div id="attendanceSignedIn">0 students</div>
-                    </div>
-                    <div class="stat-box">
-                      <strong>Live now</strong>
-                      <div id="attendanceLiveNow">0 online</div>
-                    </div>
-                    <div class="stat-box">
-                      <strong>Hands raised</strong>
-                      <div id="handsRaisedCount">0</div>
-                    </div>
-                  </div>
-                  <ul id="attendanceList" class="attendance-list"></ul>
-                `
-                : `
-                  <div class="detail-block">
-                    <strong>Presence</strong>
-                    <div id="attendanceHeadline">0 students live</div>
-                    <div class="small">Attendance updates automatically while this page is open.</div>
-                  </div>
-                `
-            }
-          </section>
-
-          <section class="card sidebar-card">
-            <h2>Session board</h2>
-            ${
-              teacherMode
-                ? `
-                  <form id="boardForm" class="stack">
-                    <div class="field">
-                      <label for="lessonTitleInput">Classroom title</label>
-                      <input id="lessonTitleInput" class="input" maxlength="120" />
-                    </div>
-                    <div class="field">
-                      <label for="topicInput">Current topic</label>
-                      <input id="topicInput" class="input" maxlength="120" />
-                    </div>
-                    <div class="field">
-                      <label for="objectiveInput">Objective</label>
-                      <textarea id="objectiveInput" class="textarea"></textarea>
-                    </div>
-                    <div class="field">
-                      <label for="promptInput">Prompt / debug note</label>
-                      <textarea id="promptInput" class="textarea"></textarea>
-                    </div>
-                    <div class="field">
-                      <label for="checklistInput">Workbench checklist (one line per item)</label>
-                      <textarea id="checklistInput" class="textarea"></textarea>
-                    </div>
-                    <div class="button-row">
+          <!-- Board panel -->
+          <div class="sidebar-panel active" data-panel="board">
+            <div class="sidebar-panel-inner">
+              ${
+                teacherMode
+                  ? `
+                    <form id="boardForm" class="stack">
+                      <div class="field">
+                        <label for="lessonTitleInput">Title</label>
+                        <input id="lessonTitleInput" class="input" maxlength="120" />
+                      </div>
+                      <div class="field">
+                        <label for="topicInput">Topic</label>
+                        <input id="topicInput" class="input" maxlength="120" />
+                      </div>
+                      <div class="field">
+                        <label for="objectiveInput">Objective</label>
+                        <textarea id="objectiveInput" class="textarea" rows="2"></textarea>
+                      </div>
+                      <div class="field">
+                        <label for="promptInput">Prompt / note</label>
+                        <textarea id="promptInput" class="textarea" rows="2"></textarea>
+                      </div>
+                      <div class="field">
+                        <label for="checklistInput">Checklist (one per line)</label>
+                        <textarea id="checklistInput" class="textarea" rows="3"></textarea>
+                      </div>
                       <button class="button" type="submit">Update board</button>
+                    </form>
+                    <form id="announcementForm" class="stack">
+                      <div class="field">
+                        <label for="phaseSelect">Phase</label>
+                        <select id="phaseSelect" class="select">
+                          <option value="lecture">Lecture</option>
+                          <option value="lab">Lab</option>
+                          <option value="qa">Q&amp;A</option>
+                          <option value="break">Break</option>
+                        </select>
+                      </div>
+                      <div class="field">
+                        <label for="announcementInput">Announcement</label>
+                        <textarea id="announcementInput" class="textarea" rows="2" placeholder="e.g. 'Break for 5 min'"></textarea>
+                      </div>
+                      <div class="button-row">
+                        <button class="button" type="submit">Post</button>
+                        <button class="button secondary" type="button" id="clearAnnouncementButton">Clear</button>
+                      </div>
+                    </form>
+                  `
+                  : `
+                    <div id="lessonDetails" class="lesson-details"></div>
+                    <div class="detail-block">
+                      <strong>Phase</strong>
+                      <div id="studentPhaseLabel">Lecture</div>
+                      <div class="small" id="studentAnnouncementCopy">No announcement.</div>
                     </div>
-                  </form>
-                `
-                : `<div id="lessonDetails" class="lesson-details"></div>`
-            }
-          </section>
-
-          <section class="card sidebar-card">
-            <h2>Live resources</h2>
-            ${
-              teacherMode
-                ? `
-                  <form id="linkForm" class="stack">
-                    <div class="field">
-                      <label for="linkTitleInput">Label</label>
-                      <input id="linkTitleInput" class="input" placeholder="Optional" />
-                    </div>
-                    <div class="field">
-                      <label for="linkUrlInput">URL</label>
-                      <input id="linkUrlInput" class="input" placeholder="https://..." />
-                    </div>
-                    <div class="field">
-                      <label for="linkTagInput">Tag</label>
-                      <input id="linkTagInput" class="input" placeholder="Repo, Datasheet, Task" />
-                    </div>
-                    <div class="button-row">
-                      <button class="button" type="submit">Share link</button>
-                    </div>
-                  </form>
-                `
-                : ""
-            }
-            <ul id="linksList" class="links-list"></ul>
-          </section>
-
-          <section class="card sidebar-card">
-            <h2>Focus timer</h2>
-            <div class="timer-face">
-              <p class="timer-value" id="timerValue">--:--</p>
-              <p class="timer-label" id="timerLabel">No active timer</p>
+                  `
+              }
             </div>
-            ${
-              teacherMode
-                ? `
-                  <form id="timerForm" class="stack">
-                    <div class="field">
-                      <label for="timerLabelInput">Timer label</label>
-                      <input id="timerLabelInput" class="input" />
+          </div>
+
+          <!-- People panel -->
+          <div class="sidebar-panel" data-panel="people">
+            <div class="sidebar-panel-inner">
+              ${
+                teacherMode
+                  ? `
+                    <div class="stat-grid">
+                      <div class="stat-box">
+                        <strong>Signed in</strong>
+                        <div id="attendanceSignedIn">0</div>
+                      </div>
+                      <div class="stat-box">
+                        <strong>Live</strong>
+                        <div id="attendanceLiveNow">0</div>
+                      </div>
+                      <div class="stat-box">
+                        <strong>Hands</strong>
+                        <div id="handsRaisedCount">0</div>
+                      </div>
                     </div>
-                    <div class="field">
-                      <label for="timerMinutesInput">Minutes</label>
-                      <input id="timerMinutesInput" class="input" type="number" min="1" max="180" value="20" />
+                    <ul id="attendanceList" class="attendance-list"></ul>
+                  `
+                  : `
+                    <div id="studentPresenceCard" class="detail-block"></div>
+                    <div class="detail-block">
+                      <div id="attendanceHeadline">0 students live</div>
+                      <div class="small">Updates automatically.</div>
                     </div>
                     <div class="button-row">
-                      <button class="button" type="submit">Start timer</button>
-                      <button class="button secondary" type="button" id="clearTimerButton">Clear</button>
+                      <button class="button" type="button" id="toggleHandRaiseButton">Raise hand</button>
                     </div>
-                  </form>
-                `
-                : ""
-            }
-          </section>
+                    <div class="small" id="handRaiseStatus">Your hand is down.</div>
+                  `
+              }
+            </div>
+          </div>
 
-          <section class="card sidebar-card">
-            <h2>Screen relay</h2>
-            <div id="screenContainer"></div>
-            ${
-              teacherMode
-                ? `
-                  <div class="stack">
+          <!-- Resources panel -->
+          <div class="sidebar-panel" data-panel="resources">
+            <div class="sidebar-panel-inner">
+              ${
+                teacherMode
+                  ? `
+                    <form id="linkForm" class="stack">
+                      <div class="field">
+                        <label for="linkTitleInput">Label</label>
+                        <input id="linkTitleInput" class="input" placeholder="Optional" />
+                      </div>
+                      <div class="field">
+                        <label for="linkUrlInput">URL</label>
+                        <input id="linkUrlInput" class="input" placeholder="https://..." />
+                      </div>
+                      <div class="field">
+                        <label for="linkTagInput">Tag</label>
+                        <input id="linkTagInput" class="input" placeholder="Repo, Datasheet" />
+                      </div>
+                      <button class="button" type="submit">Share link</button>
+                    </form>
+                  `
+                  : ""
+              }
+              <ul id="linksList" class="links-list"></ul>
+            </div>
+          </div>
+
+          <!-- Tools panel -->
+          <div class="sidebar-panel" data-panel="tools">
+            <div class="sidebar-panel-inner">
+              <div class="timer-face">
+                <p class="timer-value" id="timerValue">--:--</p>
+                <p class="timer-label" id="timerLabel">No active timer</p>
+              </div>
+              ${
+                teacherMode
+                  ? `
+                    <form id="timerForm" class="stack">
+                      <div class="field">
+                        <label for="timerLabelInput">Label</label>
+                        <input id="timerLabelInput" class="input" />
+                      </div>
+                      <div class="field">
+                        <label for="timerMinutesInput">Minutes</label>
+                        <input id="timerMinutesInput" class="input" type="number" min="1" max="180" value="20" />
+                      </div>
+                      <div class="button-row">
+                        <button class="button" type="submit">Start</button>
+                        <button class="button secondary" type="button" id="clearTimerButton">Clear</button>
+                      </div>
+                    </form>
+                  `
+                  : ""
+              }
+              <hr />
+              <h3 class="small">Screen relay</h3>
+              <div id="screenContainer"></div>
+              ${
+                teacherMode
+                  ? `
                     <div class="field">
                       <label for="screenLabelInput">Label</label>
                       <input id="screenLabelInput" class="input" value="Screen relay" />
                     </div>
                     <div class="button-row">
                       <button class="button" type="button" id="startScreenButton">Start relay</button>
-                      <button class="button secondary" type="button" id="stopScreenButton">Stop relay</button>
+                      <button class="button secondary" type="button" id="stopScreenButton">Stop</button>
                     </div>
-                    <p class="small">The board stays above the latest shared screen frame so you can annotate it live.</p>
-                  </div>
-                `
-                : `<p class="small">When the teacher shares a screen relay, the latest frame appears here and under the board annotations.</p>`
-            }
-          </section>
+                  `
+                  : `<p class="small">Screen frames appear here when the teacher shares.</p>`
+              }
+              <hr />
+              <h3 class="small">Session summary</h3>
+              <div id="summaryMeta" class="small"></div>
+              <div id="summaryPreview" class="summary-preview"><pre>No summary yet.</pre></div>
+              ${
+                teacherMode
+                  ? `
+                    <div class="button-row">
+                      <button class="button" type="button" id="generateSummaryButton">Generate</button>
+                      <button class="button secondary" type="button" id="copySummaryButton">Copy</button>
+                      <button class="button secondary" type="button" id="downloadSummaryButton">Download</button>
+                    </div>
+                    <button class="button ghost" type="button" id="endClassButton">Mark class ended</button>
+                  `
+                  : ""
+              }
+            </div>
+          </div>
 
-          <section class="card sidebar-card">
-            <h2>Session summary</h2>
-            <div id="summaryMeta" class="small"></div>
-            <div id="summaryPreview" class="summary-preview"><pre>No summary generated yet.</pre></div>
-            ${
-              teacherMode
-                ? `
-                  <div class="summary-actions">
-                    <button class="button" type="button" id="generateSummaryButton">Generate summary</button>
-                    <button class="button secondary" type="button" id="copySummaryButton">Copy</button>
-                    <button class="button secondary" type="button" id="downloadSummaryButton">Download</button>
-                    <button class="button ghost" type="button" id="endClassButton">Mark ended</button>
+          ${
+            teacherMode
+              ? `
+                <!-- Share panel (teacher only) -->
+                <div class="sidebar-panel" data-panel="share">
+                  <div class="sidebar-panel-inner">
+                    <div class="stat-grid">
+                      <div class="stat-box">
+                        <strong>Class code</strong>
+                        <div id="roomCodeValue" class="mono"></div>
+                      </div>
+                      <div class="stat-box">
+                        <strong>Invite token</strong>
+                        <div id="inviteCodeValue" class="mono"></div>
+                      </div>
+                    </div>
+                    <div class="field">
+                      <label for="visibilitySelect">Visibility</label>
+                      <select id="visibilitySelect" class="select">
+                        <option value="invite">Invite only</option>
+                        <option value="public">Public in gallery</option>
+                      </select>
+                    </div>
+                    <div class="qr-card">
+                      <img id="viewerQr" class="qr-image" alt="Classroom QR code" />
+                      <div id="qrFallback" class="small"></div>
+                    </div>
+                    <div class="share-field">
+                      <label for="studentLink" class="small">Student join link</label>
+                      <div class="share-input">
+                        <input id="studentLink" class="input readonly" readonly />
+                        <button class="button secondary" type="button" data-copy-target="studentLink">Copy</button>
+                      </div>
+                    </div>
+                    <div class="share-field">
+                      <label for="joinCodeField" class="small">Short join token</label>
+                      <div class="share-input">
+                        <input id="joinCodeField" class="input readonly mono" readonly />
+                        <button class="button secondary" type="button" data-copy-target="joinCodeField">Copy</button>
+                      </div>
+                    </div>
                   </div>
-                `
-                : ""
-            }
-          </section>
+                </div>
+              `
+              : ""
+          }
         </aside>
       </section>
     </main>
@@ -1591,6 +1640,7 @@ function renderClassroomShell(role) {
     colorGroup: document.querySelector("#colorGroup"),
     teacherToolbar: document.querySelector("#teacherToolbar"),
     brushSize: document.querySelector("#brushSize"),
+    undoButton: document.querySelector("#undoButton"),
     clearCanvasButton: document.querySelector("#clearCanvasButton"),
     screenLabelInput: document.querySelector("#screenLabelInput"),
     startScreenButton: document.querySelector("#startScreenButton"),
@@ -1609,6 +1659,16 @@ function bindClassroomControls(role) {
     window.location.hash = "#/dashboard";
   });
 
+  document.querySelectorAll(".sidebar-tab").forEach((tab) => {
+    tab.addEventListener("click", () => {
+      const panelId = tab.getAttribute("data-tab");
+      document.querySelectorAll(".sidebar-tab").forEach((t) => t.classList.remove("active"));
+      document.querySelectorAll(".sidebar-panel").forEach((p) => p.classList.remove("active"));
+      tab.classList.add("active");
+      document.querySelector(`.sidebar-panel[data-panel="${panelId}"]`)?.classList.add("active");
+    });
+  });
+
   document.querySelectorAll("[data-copy-target]").forEach((button) => {
     button.addEventListener("click", async () => {
       const targetId = button.getAttribute("data-copy-target");
@@ -1619,13 +1679,15 @@ function bindClassroomControls(role) {
   });
 
   if (role !== "teacher") {
-    state.refs.toggleHandRaiseButton?.addEventListener("click", toggleHandRaise);
+    state.refs.toggleHandRaiseButton?.addEventListener("click", guardAction("handRaise", toggleHandRaise));
     return;
   }
 
+  document.addEventListener("keydown", handleClassroomKeyboard);
+
   state.refs.announcementForm?.addEventListener("submit", async (event) => {
     event.preventDefault();
-    await updateAnnouncementState();
+    await guardAction("announcement", updateAnnouncementState)();
   });
 
   state.refs.clearAnnouncementButton?.addEventListener("click", clearAnnouncementState);
@@ -1657,16 +1719,17 @@ function bindClassroomControls(role) {
     state.drawing.size = Number(event.target.value) || 4;
   });
 
-  state.refs.clearCanvasButton?.addEventListener("click", clearBoard);
+  state.refs.undoButton?.addEventListener("click", () => undoLastStroke());
+  state.refs.clearCanvasButton?.addEventListener("click", confirmAction("Clear the entire board? This cannot be undone.", guardAction("clearBoard", clearBoard)));
 
   state.refs.boardForm?.addEventListener("submit", async (event) => {
     event.preventDefault();
-    await updateSessionBoard();
+    await guardAction("boardForm", updateSessionBoard)();
   });
 
   state.refs.linkForm?.addEventListener("submit", async (event) => {
     event.preventDefault();
-    await shareResourceLink();
+    await guardAction("linkForm", shareResourceLink)();
   });
 
   state.refs.linksList?.addEventListener("click", async (event) => {
@@ -1680,13 +1743,13 @@ function bindClassroomControls(role) {
 
   state.refs.timerForm?.addEventListener("submit", async (event) => {
     event.preventDefault();
-    await startFocusTimer();
+    await guardAction("timerForm", startFocusTimer)();
   });
 
-  state.refs.clearTimerButton?.addEventListener("click", clearFocusTimer);
-  state.refs.startScreenButton?.addEventListener("click", startScreenRelay);
-  state.refs.stopScreenButton?.addEventListener("click", stopScreenRelay);
-  state.refs.generateSummaryButton?.addEventListener("click", generateAndStoreSummary);
+  state.refs.clearTimerButton?.addEventListener("click", guardAction("clearTimer", clearFocusTimer));
+  state.refs.startScreenButton?.addEventListener("click", guardAction("startScreen", startScreenRelay));
+  state.refs.stopScreenButton?.addEventListener("click", guardAction("stopScreen", stopScreenRelay));
+  state.refs.generateSummaryButton?.addEventListener("click", guardAction("generateSummary", generateAndStoreSummary));
   state.refs.copySummaryButton?.addEventListener("click", async () => {
     const markdown = buildSessionSummary(state.classroom);
     await copyText(markdown);
@@ -1699,7 +1762,58 @@ function bindClassroomControls(role) {
       markdown,
     );
   });
-  state.refs.endClassButton?.addEventListener("click", markClassroomEnded);
+  state.refs.endClassButton?.addEventListener("click", confirmAction("Mark this class as ended?", guardAction("endClass", markClassroomEnded)));
+}
+
+function handleClassroomKeyboard(event) {
+  if (getCurrentClassroomRole() !== "teacher") {
+    return;
+  }
+
+  const tag = document.activeElement?.tagName;
+  if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") {
+    return;
+  }
+
+  const key = event.key.toLowerCase();
+
+  if ((event.ctrlKey || event.metaKey) && key === "z") {
+    event.preventDefault();
+    void undoLastStroke();
+    return;
+  }
+
+  switch (key) {
+    case "p":
+    case "d":
+      state.drawing.tool = "draw";
+      refreshToolbarState();
+      break;
+    case "e":
+      state.drawing.tool = "erase";
+      refreshToolbarState();
+      break;
+    case "[":
+      state.drawing.size = Math.max(state.drawing.size - 1, 1);
+      if (state.refs.brushSize) state.refs.brushSize.value = state.drawing.size;
+      break;
+    case "]":
+      state.drawing.size = Math.min(state.drawing.size + 1, 16);
+      if (state.refs.brushSize) state.refs.brushSize.value = state.drawing.size;
+      break;
+    case "1":
+    case "2":
+    case "3":
+    case "4":
+    case "5":
+      if (PALETTE[Number(key) - 1]) {
+        state.drawing.color = PALETTE[Number(key) - 1];
+        state.drawing.tool = "draw";
+        refreshToolbarState();
+        renderColorSwatches();
+      }
+      break;
+  }
 }
 
 function renderColorSwatches() {
@@ -1811,6 +1925,17 @@ function updateAttendance() {
   }
 
   if (getCurrentClassroomRole() === "teacher") {
+    if (raisedHands.length > state.lastHandCount) {
+      const newHands = raisedHands.length - state.lastHandCount;
+      showNotice(`${newHands} new hand${newHands === 1 ? "" : "s"} raised!`);
+      const peopleTab = document.querySelector('.sidebar-tab[data-tab="people"]');
+      if (peopleTab && !peopleTab.classList.contains("active")) {
+        peopleTab.classList.add("tab-flash");
+        setTimeout(() => peopleTab.classList.remove("tab-flash"), 2000);
+      }
+    }
+    state.lastHandCount = raisedHands.length;
+
     if (state.refs.attendanceSignedIn) {
       state.refs.attendanceSignedIn.textContent = `${participants.length} students`;
     }
@@ -2014,13 +2139,14 @@ function renderTimerFace() {
   }
 
   const timer = state.classroom?.timer;
-  if (!timer?.active || !timer.endsAt) {
+  if (!timer?.active || !timer.startedAt || !timer.durationMinutes) {
     state.refs.timerValue.textContent = "--:--";
     state.refs.timerLabel.textContent = "No active timer";
     return;
   }
 
-  const remainingMs = Math.max(timer.endsAt - Date.now(), 0);
+  const endsAt = Number(timer.startedAt) + timer.durationMinutes * 60_000;
+  const remainingMs = Math.max(endsAt - Date.now(), 0);
   const totalSeconds = Math.ceil(remainingMs / 1000);
   const minutes = String(Math.floor(totalSeconds / 60)).padStart(2, "0");
   const seconds = String(totalSeconds % 60).padStart(2, "0");
@@ -2048,7 +2174,7 @@ function updateScreenSection() {
   }
 
   state.refs.screenContainer.innerHTML = `
-    <img class="screen-preview" src="${screen.image}" alt="Screen relay" />
+    <img class="screen-preview" src="${escapeAttribute(sanitizeDataUrl(screen.image))}" alt="Screen relay" />
     <div class="small">${escapeHtml(screen.label || "Screen relay")} • Updated ${escapeHtml(
       formatClockTime(screen.updatedAt),
     )}</div>
@@ -2085,7 +2211,7 @@ function updatePresentationSurface() {
   state.refs.boardMedia?.classList.toggle("visible", screenActive);
 
   if (screenActive && state.refs.boardImage) {
-    state.refs.boardImage.src = state.classroom.screen.image;
+    state.refs.boardImage.src = sanitizeDataUrl(state.classroom.screen.image);
   } else if (state.refs.boardImage) {
     state.refs.boardImage.removeAttribute("src");
   }
@@ -2330,6 +2456,38 @@ async function finishCurrentStroke() {
       updatedAt: timestampValue(),
     },
   ).catch(() => {});
+
+  state.drawing.undoStack.push(stroke.id);
+  if (state.drawing.undoStack.length > state.drawing.maxUndo) {
+    state.drawing.undoStack.shift();
+  }
+
+  requestCanvasRender();
+  scheduleThumbnailPublish();
+  maybeCompactStrokes();
+}
+
+async function undoLastStroke() {
+  if (!state.classroom || getCurrentClassroomRole() !== "teacher") {
+    return;
+  }
+
+  const strokeId = state.drawing.undoStack.pop();
+  if (!strokeId) {
+    showNotice("Nothing to undo.");
+    return;
+  }
+
+  await updateClassroomAndSummary(
+    state.classroom.meta.id,
+    {
+      [`board/strokes/${strokeId}`]: null,
+      "meta/updatedAt": timestampValue(),
+    },
+    {
+      updatedAt: timestampValue(),
+    },
+  ).catch(() => {});
   requestCanvasRender();
   scheduleThumbnailPublish();
 }
@@ -2341,6 +2499,7 @@ async function clearBoard() {
 
   state.drawing.currentStroke = null;
   state.drawing.lastPoint = null;
+  state.drawing.undoStack = [];
 
   await updateClassroomAndSummary(state.classroom.meta.id, {
     "board/strokes": null,
@@ -2353,6 +2512,38 @@ async function clearBoard() {
     note: "Board cleared",
   });
   showNotice("Board cleared.");
+}
+
+function maybeCompactStrokes() {
+  if (!state.classroom || getCurrentClassroomRole() !== "teacher") {
+    return;
+  }
+
+  const maxStrokes = getAppConfig().maxStrokesBeforeCompact || 300;
+  const strokeCount = Object.keys(state.classroom.board.strokes).length;
+  if (strokeCount < maxStrokes) {
+    return;
+  }
+
+  const sortedIds = Object.entries(state.classroom.board.strokes)
+    .sort((a, b) => {
+      const aTime = a[1].points?.[0]?.t || 0;
+      const bTime = b[1].points?.[0]?.t || 0;
+      return aTime - bTime;
+    })
+    .map(([id]) => id);
+
+  const removeCount = Math.floor(sortedIds.length / 3);
+  const removals = {};
+  for (let i = 0; i < removeCount; i++) {
+    removals[`board/strokes/${sortedIds[i]}`] = null;
+  }
+  removals["meta/updatedAt"] = timestampValue();
+
+  state.db
+    .ref(`classrooms/${state.classroom.meta.id}`)
+    .update(removals)
+    .catch(() => {});
 }
 
 async function setCanvasBackground(background) {
@@ -2489,7 +2680,7 @@ async function startFocusTimer() {
         label,
         durationMinutes: minutes,
         startedAt: timestampValue(),
-        endsAt: Date.now() + minutes * 60_000,
+        endsAt: timestampValue(),
       },
       "meta/updatedAt": timestampValue(),
     },
@@ -2565,13 +2756,16 @@ async function startScreenRelay() {
         return;
       }
 
-      const width = 960;
-      const height = Math.max(Math.round((videoHeight / videoWidth) * width), 540);
+      const width = 800;
+      const height = Math.max(Math.round((videoHeight / videoWidth) * width), 450);
       state.screen.canvas.width = width;
       state.screen.canvas.height = height;
       const context = state.screen.canvas.getContext("2d");
       context.drawImage(state.screen.video, 0, 0, width, height);
-      const image = state.screen.canvas.toDataURL("image/jpeg", 0.62);
+      let image = state.screen.canvas.toDataURL("image/jpeg", 0.5);
+      if (image.length > 480000) {
+        image = state.screen.canvas.toDataURL("image/jpeg", 0.3);
+      }
       const label = (state.refs.screenLabelInput?.value || "").trim() || "Screen relay";
 
       state.screen.sending = true;
@@ -3235,8 +3429,8 @@ function buildSessionSummary(classroom) {
     `- Background: ${classroom.board.background}`,
     `- Screen relay active: ${classroom.screen.active ? "Yes" : "No"}`,
     `- Timer: ${
-      classroom.timer.active
-        ? `${classroom.timer.label} until ${formatClockTime(classroom.timer.endsAt)}`
+      classroom.timer.active && classroom.timer.startedAt
+        ? `${classroom.timer.label} (${classroom.timer.durationMinutes} min from ${formatClockTime(classroom.timer.startedAt)})`
         : "No active timer"
     }`,
     "",
@@ -3395,12 +3589,20 @@ function renderNotFoundScreen() {
 }
 
 function parseRoute(hashValue = window.location.hash) {
-  const raw = (hashValue || "#/dashboard").replace(/^#/, "") || "/dashboard";
+  const raw = (hashValue || "#/").replace(/^#/, "") || "/";
   const [pathPart, queryString = ""] = raw.split("?");
   const segments = pathPart.split("/").filter(Boolean);
   const params = new URLSearchParams(queryString);
 
-  if (!segments.length || segments[0] === "dashboard") {
+  if (!segments.length || segments[0] === "landing") {
+    return {
+      kind: "landing",
+      classroomId: "",
+      invite: "",
+    };
+  }
+
+  if (segments[0] === "dashboard") {
     return {
       kind: "dashboard",
       classroomId: "",
@@ -3573,7 +3775,7 @@ function normalizeSummaries(value) {
       createdAt: summary.createdAt || 0,
       updatedAt: summary.updatedAt || 0,
       endedAt: summary.endedAt || 0,
-      thumbnail: summary.thumbnail || "",
+      thumbnail: sanitizeDataUrl(summary.thumbnail),
     }))
     .sort(sortSummaries);
 }
@@ -3583,7 +3785,7 @@ function normalizeLinks(value) {
     .map(([id, link]) => ({
       id,
       title: link.title || deriveLinkTitle(link.url || ""),
-      url: link.url || "",
+      url: normalizeUrl(link.url || ""),
       tag: link.tag || "",
       createdAt: link.createdAt || 0,
     }))
@@ -3623,7 +3825,7 @@ function normalizeTimer(value) {
 function normalizeScreen(value) {
   return {
     active: Boolean(value?.active && value?.image),
-    image: value?.image || "",
+    image: sanitizeDataUrl(value?.image),
     label: value?.label || "",
     updatedAt: value?.updatedAt || 0,
   };
@@ -3861,11 +4063,9 @@ async function renderQrCode(text, imageElement, fallbackElement) {
       fallbackElement.textContent = "Scan to open the classroom on a second screen or phone.";
     }
   } catch (error) {
-    imageElement.src = `https://api.qrserver.com/v1/create-qr-code/?size=192x192&data=${encodeURIComponent(
-      text,
-    )}`;
+    imageElement.style.display = "none";
     if (fallbackElement) {
-      fallbackElement.textContent = "If the QR image does not load, copy the link instead.";
+      fallbackElement.textContent = "QR generation failed. Copy the link instead.";
     }
   }
 }
@@ -4158,11 +4358,15 @@ function makeId() {
     return window.crypto.randomUUID();
   }
 
-  return `id-${Math.random().toString(16).slice(2)}`;
+  const bytes = new Uint8Array(16);
+  window.crypto.getRandomValues(bytes);
+  return Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
 }
 
 function makeClassroomId() {
-  return Math.random().toString(36).slice(2, 8).toLowerCase();
+  const bytes = new Uint8Array(4);
+  window.crypto.getRandomValues(bytes);
+  return Array.from(bytes, (b) => b.toString(36).padStart(2, "0")).join("").slice(0, 8);
 }
 
 function normalizeEmail(value) {
@@ -4199,7 +4403,9 @@ async function sha256Hex(value) {
 }
 
 function makeInviteCode() {
-  return Math.random().toString(36).slice(2, 8).toUpperCase();
+  const bytes = new Uint8Array(4);
+  window.crypto.getRandomValues(bytes);
+  return Array.from(bytes, (b) => b.toString(36).padStart(2, "0")).join("").slice(0, 6).toUpperCase();
 }
 
 function cloneStroke(stroke) {
@@ -4254,6 +4460,14 @@ function escapeHtml(value) {
 
 function escapeAttribute(value) {
   return escapeHtml(value);
+}
+
+function sanitizeDataUrl(value) {
+  const str = String(value || "");
+  if (str.startsWith("data:image/")) {
+    return str;
+  }
+  return "";
 }
 
 function requiresFirebaseAuthSetup(error) {

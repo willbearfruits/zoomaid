@@ -29,9 +29,16 @@ jobs:
         run: |
           mkdir -p dist/public
           cp index.html dist/index.html
+          cp manifest.json dist/manifest.json
           cp .nojekyll dist/.nojekyll
           cp 404.html dist/404.html
           cp -R public/. dist/public/
+
+      - name: Inject Firebase config from secrets
+        if: ${{ secrets.FIREBASE_CONFIG_JS != '' }}
+        env:
+          FIREBASE_CONFIG_JS: ${{ secrets.FIREBASE_CONFIG_JS }}
+        run: echo "$FIREBASE_CONFIG_JS" > dist/public/firebase-config.js
 
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v3
